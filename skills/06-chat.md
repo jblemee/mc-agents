@@ -13,12 +13,8 @@ return 'Whisper sent'
 ```
 
 ### Read recent chat messages
-Note: messages are captured by the bot. To read recent history,
-we use a temporary listener. But in a short cycle, it's better to
-check the status.json file which contains essential info.
 
 ```js
-// Listen for messages for 5 seconds
 const messages = []
 const listener = (username, message) => {
   if (username !== bot.username) messages.push(`${username}: ${message}`)

@@ -1,7 +1,6 @@
 ### Look around
 
 ```js
-// Nearby blocks within a radius of 16
 const blocks = bot.findBlocks({
   matching: (block) => block.name !== 'air',
   maxDistance: 16,

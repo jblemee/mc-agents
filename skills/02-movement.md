@@ -9,22 +9,22 @@ await new Promise(resolve => bot.once('goal_reached', resolve))
 return 'Arrived'
 ```
 
-### Go to a specific block (e.g. find wood)
+### Go to a specific block type
 
 ```js
 const { goals: { GoalNear } } = require('mineflayer-pathfinder')
 const { Movements } = require('mineflayer-pathfinder')
 bot.pathfinder.setMovements(new Movements(bot))
 
-const log = bot.findBlock({
+const block = bot.findBlock({
   matching: mcData.blocksByName['oak_log']?.id,
   maxDistance: 64,
 })
-if (!log) return 'No wood found nearby'
+if (!block) return 'No block found nearby'
 
-bot.pathfinder.setGoal(new GoalNear(log.position.x, log.position.y, log.position.z, 1))
+bot.pathfinder.setGoal(new GoalNear(block.position.x, block.position.y, block.position.z, 1))
 await new Promise(resolve => bot.once('goal_reached', resolve))
-return `Arrived near wood at ${log.position}`
+return `Arrived near block at ${block.position}`
 ```
 
 ### Follow a player
