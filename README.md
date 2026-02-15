@@ -13,13 +13,36 @@ Des agents IA autonomes qui survivent dans Minecraft. Chaque agent est un LLM (C
        ▼                                     ▼
    MEMORY.md                          Serveur Minecraft
    skills/*.md
+   tools/*.js
 ```
 
 1. Un **bot Mineflayer** reste connecté au serveur Minecraft (process Node.js permanent)
-2. Un **script boucle** qui relance un LLM à intervalles réguliers
-3. Le LLM lit ses **skills** (comment utiliser mineflayer), sa **mémoire** (ce qu'il a fait avant), et son **état** (vie, faim, position)
+2. Un **script boucle** relance un LLM à intervalles réguliers
+3. Le LLM lit ses **skills** (comment utiliser mineflayer), sa **mémoire** (ce qu'il a fait avant), son **état** (vie, faim, position) et ses **tools disponibles**
 4. Il écrit du JS dans `inbox.js`, le bot l'exécute, le résultat arrive dans `outbox.json`
-5. Avant de finir, le LLM met à jour son `MEMORY.md`
+5. Si le script a marché, l'agent le sauvegarde comme **tool réutilisable** dans `tools/`
+6. Avant de finir, le LLM met à jour son `MEMORY.md`
+
+## Tools réutilisables
+
+Chaque agent se construit une **boîte à outils** de scripts testés et réutilisables :
+
+- Quand un script fonctionne, l'agent le sauvegarde dans `agents/<name>/tools/` sous forme de module JS
+- Les tools sont **auto-chargés** au démarrage du bot et **rechargés à chaud** quand un fichier change
+- L'agent peut appeler ses tools depuis `inbox.js` : `await tools.mine({ block: 'oak_log' })`
+- Le `bot` est injecté automatiquement comme premier argument
+
+Format d'un tool :
+```js
+// Miner N blocs d'un type donné
+module.exports = async function(bot, { block, count }) {
+  const mcData = require('minecraft-data')(bot.version)
+  // ...
+  return 'résultat'
+}
+```
+
+Le dernier script exécuté est conservé dans `last-action.js` pour faciliter le debug.
 
 ## Prérequis
 
@@ -31,7 +54,7 @@ Des agents IA autonomes qui survivent dans Minecraft. Chaque agent est un LLM (C
 ## Installation
 
 ```bash
-git clone <repo>
+git clone https://github.com/jblemee/mc-agents.git
 cd mc-agents
 npm install
 ```
@@ -54,19 +77,19 @@ MC_VERSION=1.21.11       # Version du serveur
 
 ## Lancer un agent
 
-**Étape 1 : Démarrer le bot** (reste connecté au serveur)
-
 ```bash
-node bot.js bob
+./run-agent.sh bob        # lance le bot + la boucle LLM
+./run-agent.sh bob 10     # limite à 10 cycles
 ```
 
-**Étape 2 : Démarrer la boucle LLM** (dans un autre terminal)
+Le bot se connecte au serveur, et le LLM commence ses cycles : observer → décider → agir → sauver en tool → mémoriser.
 
+Pour lancer plusieurs agents en parallèle :
 ```bash
-./run-agent.sh bob
+./run-agent.sh bob &
+./run-agent.sh alice &
+./run-agent.sh charlie &
 ```
-
-Le bot se connecte au serveur, et le LLM commence ses cycles : observer → décider → agir → mémoriser.
 
 ## Authentification
 
@@ -109,7 +132,7 @@ Les tokens sont ensuite cachés dans `.auth-cache/` — pas besoin de se re-conn
 ## Créer un nouvel agent
 
 ```bash
-mkdir -p agents/alice
+mkdir -p agents/alice/tools
 ```
 
 Créer `agents/alice/config.json` :
@@ -137,7 +160,6 @@ Première session. Je viens de spawner.
 
 Lancer :
 ```bash
-node bot.js alice &
 ./run-agent.sh alice
 ```
 
@@ -164,8 +186,8 @@ Chaque agent peut utiliser un LLM différent — il suffit de dupliquer `run-age
 mc-agents/
 ├── .env                    # Config serveur (MC_HOST, MC_PORT, MC_VERSION)
 ├── .env.example
-├── bot.js                  # Bot Mineflayer persistent
-├── run-agent.sh            # Boucle LLM
+├── bot.js                  # Bot Mineflayer persistent (charge tools/, watch auto)
+├── run-agent.sh            # Boucle LLM (injecte tools dispo dans le prompt)
 ├── system-prompt.md        # Prompt de base (commun à tous)
 ├── skills/                 # Comment utiliser mineflayer (markdown)
 │   ├── 01-basics.md
@@ -179,7 +201,12 @@ mc-agents/
         ├── config.json     # username + microsoft (optionnel)
         ├── personality.md  # Personnalité de l'agent
         ├── MEMORY.md       # Mémoire persistante entre les cycles
+        ├── tools/          # Scripts JS réutilisables (créés par l'agent)
+        │   ├── mine.js
+        │   ├── scan.js
+        │   └── ...
         ├── inbox.js        # Code JS envoyé au bot (créé par le LLM)
+        ├── last-action.js  # Dernier script exécuté (debug)
         ├── outbox.json     # Résultat de l'exécution (créé par le bot)
         └── status.json     # État en temps réel (créé par le bot)
 ```
@@ -192,3 +219,4 @@ mc-agents/
 | `unverified_username` | Ajouter `"microsoft": "email@outlook.com"` dans le `config.json` de l'agent, ou mettre `online-mode=false` sur le serveur |
 | `Cannot read properties of null (reading 'version')` | La version dans `.env` n'est pas supportée — mettre à jour mineflayer (`npm install mineflayer@latest`) |
 | Le bot ne fait rien | Vérifier que `inbox.js` est bien écrit dans le bon dossier agent |
+| `duplicate_login` | Un autre bot utilise déjà ce username — tuer le process existant |
