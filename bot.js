@@ -1,6 +1,10 @@
 const mineflayer = require('mineflayer')
 const pathfinder = require('mineflayer-pathfinder')
 const collectBlock = require('mineflayer-collectblock')
+const pvp = require('mineflayer-pvp').plugin
+const toolPlugin = require('mineflayer-tool').plugin
+const autoEat = require('mineflayer-auto-eat').loader
+const hawkeye = require('minecrafthawkeye').default
 const { Authflow, Titles } = require('prismarine-auth')
 const fs = require('fs')
 const path = require('path')
@@ -49,6 +53,10 @@ const bot = mineflayer.createBot(botOptions)
 
 bot.loadPlugin(pathfinder.pathfinder)
 bot.loadPlugin(collectBlock.plugin)
+bot.loadPlugin(pvp)
+bot.loadPlugin(toolPlugin)
+bot.loadPlugin(autoEat)
+bot.loadPlugin(hawkeye)
 
 const INBOX = path.join(AGENT_DIR, 'inbox.js')
 const LAST_ACTION = path.join(AGENT_DIR, 'last-action.js')

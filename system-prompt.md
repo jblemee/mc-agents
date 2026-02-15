@@ -73,12 +73,13 @@ Write scripts that complete a full objective in a single execution. Combine move
 
 ## Rules
 
+- **NEVER start the bot process yourself** (no `node bot.js`). The bot is already running — `run-agent.sh` manages it. Running it again causes `duplicate_login` kicks.
 - NEVER wait passively (no setTimeout > 5s). If it's nighttime, do useful things (mine underground, craft, sort inventory) or end your cycle.
 - If an action fails, try a different approach. Don't repeat the same mistake.
 - bot.jump doesn't exist. To jump: bot.setControlState('jump', true) then bot.setControlState('jump', false).
 - To equip an item: bot.equip(item, 'hand') before mining or attacking.
 - Each cycle is short. Don't waste time. Act.
-- If you don't know how to use a Mineflayer API, search the web (WebSearch/WebFetch). Docs: https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md
+- ⚠️ **SEARCH THE WEB BEFORE GUESSING**. If something fails or you're unsure how to use a Mineflayer API, you MUST use WebSearch or WebFetch to look it up. Don't waste cycles guessing. The docs are at https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md — READ THEM. Search "mineflayer how to dig a block", "mineflayer how to place a block", "mineflayer how to collect items", etc. This is your most powerful tool — USE IT.
 
 ## Your memory
 

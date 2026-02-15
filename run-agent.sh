@@ -1,9 +1,17 @@
 #!/bin/bash
-# Usage: ./run-agent.sh bob [max_loops]
+# Usage: ./run-agent.sh bob [max_loops] [llm]
+# llm: claude (default), gemini
 unset CLAUDECODE
+
+# Load .env (for GEMINI_API_KEY, etc.)
+SCRIPT_DIR_EARLY="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR_EARLY/.env" ]; then
+  export $(grep -v '^#' "$SCRIPT_DIR_EARLY/.env" | xargs)
+fi
 
 AGENT_NAME="${1:-bob}"
 MAX_LOOPS="${2:-0}"  # 0 = infinite
+LLM="${3:-gemini}"   # claude or gemini
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
 PAUSE=10  # seconds between cycles
@@ -139,34 +147,58 @@ while true; do
   start_bot  # ensure bot is running (auto-restart if crashed)
   PROMPT_FILE=$(build_prompt)
 
-  # Launch Claude Code
-  claude -p "$(cat "$PROMPT_FILE")" \
-    --model sonnet \
-    --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
-    --dangerously-skip-permissions \
-    --max-turns 20 \
-    --output-format stream-json \
-    2>&1 | while IFS= read -r line; do
-      # Extract assistant text and tool uses for logging
-      type=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('type',''))" 2>/dev/null)
-      if [ "$type" = "assistant" ]; then
-        echo "$line" | python3 -c "
+  # Launch LLM agent
+  if [ "$LLM" = "gemini" ]; then
+    gemini -p "$(cat "$PROMPT_FILE")" \
+      --model gemini-3-pro-preview \
+      --yolo \
+      --output-format stream-json \
+      2>&1
+  else
+    claude -p "$(cat "$PROMPT_FILE")" \
+      --model sonnet \
+      --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
+      --dangerously-skip-permissions \
+      --max-turns 20 \
+      --output-format stream-json \
+      2>&1
+  fi | while IFS= read -r line; do
+      echo "$line" | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-for block in d.get('message',{}).get('content',[]):
-    if block.get('type') == 'text' and block.get('text','').strip():
-        print('[THINK]', block['text'])
-    elif block.get('type') == 'tool_use':
-        name = block.get('name','')
-        if name == 'Write':
+try:
+    d = json.load(sys.stdin)
+except: sys.exit()
+t = d.get('type','')
+# Gemini format
+if t == 'message' and d.get('role') == 'assistant':
+    txt = d.get('content','')
+    if txt and not d.get('delta'): print('[THINK]', txt[:200])
+    elif txt and d.get('delta'): print(txt, end='')
+elif t == 'tool_use':
+    name = d.get('tool_name','')
+    params = d.get('parameters',{})
+    if name in ('write_file','Write','WriteFile'):
+        print(f'[WRITE] {params.get(\"file_path\",\"\")}')
+    elif name in ('run_shell_command','Bash','Shell'):
+        print(f'[BASH] {params.get(\"command\",\"\")[:120]}')
+    elif name in ('read_file','Read','ReadFile'):
+        print(f'[READ] {params.get(\"file_path\",\"\")}')
+    else:
+        print(f'[TOOL] {name}')
+elif t == 'tool_result' and d.get('status') == 'error':
+    print(f'[ERROR] {d.get(\"output\",\"\")[:120]}')
+# Claude format
+elif t == 'assistant':
+    for block in d.get('message',{}).get('content',[]):
+        if block.get('type') == 'text' and block.get('text','').strip():
+            print('[THINK]', block['text'][:200])
+        elif block.get('type') == 'tool_use':
+            name = block.get('name','')
             inp = block.get('input',{})
-            print(f'[WRITE] {inp.get(\"file_path\",\"\")}')
-        elif name == 'Bash':
-            print(f'[BASH] {block.get(\"input\",{}).get(\"command\",\"\")[:100]}')
-        elif name == 'Read':
-            print(f'[READ] {block.get(\"input\",{}).get(\"file_path\",\"\")}')
+            if name in ('Write','WriteFile'): print(f'[WRITE] {inp.get(\"file_path\",\"\")}')
+            elif name in ('Bash','Shell'): print(f'[BASH] {inp.get(\"command\",\"\")[:120]}')
+            elif name in ('Read','ReadFile'): print(f'[READ] {inp.get(\"file_path\",\"\")}')
 " 2>/dev/null
-      fi
     done | tee "$AGENT_DIR/last-run.log"
 
   # Force memory update: sub-agent analyzes the run log and updates memory
@@ -188,18 +220,26 @@ for block in d.get('message',{}).get('content',[]):
     cat "$AGENT_DIR/MEMORY.md" 2>/dev/null
     echo ""
     echo "=== INSTRUCTIONS ==="
-    echo "Write an updated MEMORY.md using the Write tool to the file: $AGENT_DIR/MEMORY.md"
+    echo "Write an updated MEMORY.md to the file: $AGENT_DIR/MEMORY.md"
     echo "Include: position, inventory, health, lessons learned (errors, protected zones, etc.), plan for next steps."
     echo "Be concise but thorough. The agent has ONLY this file as memory between sessions."
   } > "$MEMORY_FILE"
 
-  claude -p "$(cat "$MEMORY_FILE")" \
-    --model haiku \
-    --allowedTools "Write" \
-    --permission-mode acceptEdits \
-    --max-turns 4 \
-    --output-format text \
-    2>&1 | tail -1
+  if [ "$LLM" = "gemini" ]; then
+    gemini -p "$(cat "$MEMORY_FILE")" \
+      --model gemini-3-flash-preview \
+      --yolo \
+      --output-format text \
+      2>&1 | tail -1
+  else
+    claude -p "$(cat "$MEMORY_FILE")" \
+      --model haiku \
+      --allowedTools "Write" \
+      --permission-mode acceptEdits \
+      --max-turns 4 \
+      --output-format text \
+      2>&1 | tail -1
+  fi
 
   # Clear urgent flag and old chat/events after each cycle
   rm -f "$AGENT_DIR/urgent"
