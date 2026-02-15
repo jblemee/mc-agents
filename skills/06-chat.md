@@ -1,24 +1,24 @@
-### Envoyer un message dans le chat
+### Send a chat message
 
 ```js
-bot.chat('Bonjour tout le monde !')
-return 'Message envoyé'
+bot.chat('Hello everyone!')
+return 'Message sent'
 ```
 
-### Envoyer un message privé
+### Send a private message
 
 ```js
-bot.chat('/msg Steve Salut, tu veux échanger ?')
-return 'Whisper envoyé'
+bot.chat('/msg Steve Hey, want to trade?')
+return 'Whisper sent'
 ```
 
-### Lire les derniers messages du chat
-Note: les messages sont capturés par le bot. Pour lire l'historique récent,
-on utilise un listener temporaire. Mais dans un cycle court, mieux vaut
-vérifier le fichier status.json qui contient les infos essentielles.
+### Read recent chat messages
+Note: messages are captured by the bot. To read recent history,
+we use a temporary listener. But in a short cycle, it's better to
+check the status.json file which contains essential info.
 
 ```js
-// Écouter les messages pendant 5 secondes
+// Listen for messages for 5 seconds
 const messages = []
 const listener = (username, message) => {
   if (username !== bot.username) messages.push(`${username}: ${message}`)
@@ -26,5 +26,5 @@ const listener = (username, message) => {
 bot.on('chat', listener)
 await new Promise(r => setTimeout(r, 5000))
 bot.removeListener('chat', listener)
-return messages.length ? messages.join('\n') : 'Aucun message reçu'
+return messages.length ? messages.join('\n') : 'No messages received'
 ```

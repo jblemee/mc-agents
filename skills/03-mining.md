@@ -1,20 +1,20 @@
-### Miner un bloc (approche simple et sûre)
+### Mine a block (simple and safe approach)
 
-Toujours vérifier l'inventaire avant/après pour détecter la zone de spawn protégée.
+Always check inventory before/after to detect the protected spawn zone.
 
-**IMPORTANT** : Tu ne peux miner que des blocs auxquels tu as un accès direct — il ne doit y avoir que de l'air entre toi et le bloc. Si un bloc est enterré sous de la dirt/grass, mine d'abord les blocs qui le recouvrent. `bot.canDigBlock(block)` te dit si c'est possible.
+**IMPORTANT**: You can only mine blocks you have direct access to — there must be only air between you and the block. If a block is buried under dirt/grass, mine the covering blocks first. `bot.canDigBlock(block)` tells you if it's possible.
 
 ```js
-const blockName = 'oak_log'  // changer selon besoin
+const blockName = 'oak_log'  // change as needed
 const block = bot.findBlock({
   matching: mcData.blocksByName[blockName]?.id,
   maxDistance: 32,
 })
-if (!block) return `Pas de ${blockName} trouvé`
+if (!block) return `No ${blockName} found`
 
 const invBefore = bot.inventory.items().length
 
-// S'approcher (max 4 blocs)
+// Approach (max 4 blocks away)
 const { goals: { GoalNear } } = require('mineflayer-pathfinder')
 const { Movements } = require('mineflayer-pathfinder')
 bot.pathfinder.setMovements(new Movements(bot))
@@ -23,17 +23,17 @@ await new Promise(resolve => bot.once('goal_reached', resolve))
 
 await bot.dig(bot.blockAt(block.position))
 
-// Attendre que l'item tombe et soit ramassé
+// Wait for the item to drop and be picked up
 await new Promise(r => setTimeout(r, 500))
 const invAfter = bot.inventory.items().length
 
 if (invAfter <= invBefore) {
-  return `ATTENTION: bloc miné mais rien récupéré ! Probablement en zone de spawn protégée. Il faut s'éloigner du spawn.`
+  return `WARNING: block mined but nothing collected! Probably in protected spawn zone. You need to move away from spawn.`
 }
-return `${blockName} miné et récupéré ! Inventaire: ${bot.inventory.items().map(i => i.name + ' x' + i.count).join(', ')}`
+return `${blockName} mined and collected! Inventory: ${bot.inventory.items().map(i => i.name + ' x' + i.count).join(', ')}`
 ```
 
-### S'éloigner du spawn (FAIRE EN PREMIER si zone protégée)
+### Move away from spawn (DO THIS FIRST if in protected zone)
 
 ```js
 const { goals: { GoalXZ } } = require('mineflayer-pathfinder')
@@ -41,10 +41,10 @@ const { Movements } = require('mineflayer-pathfinder')
 const moves = new Movements(bot)
 moves.allowSprinting = true
 bot.pathfinder.setMovements(moves)
-// Aller à 200 blocs dans une direction
+// Go 200 blocks in one direction
 const target = { x: bot.entity.position.x + 200, z: bot.entity.position.z + 200 }
 bot.pathfinder.setGoal(new GoalXZ(target.x, target.z))
 await new Promise(resolve => bot.once('goal_reached', resolve))
-return `Arrivé à ${bot.entity.position}`
+return `Arrived at ${bot.entity.position}`
 ```
-Note : le pathfinder peut timeout sur les longues distances. Si timeout, relancer — le bot avancera petit à petit entre chaque cycle.
+Note: the pathfinder may timeout on long distances. If it times out, re-run — the bot will make progress between each cycle.

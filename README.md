@@ -1,55 +1,55 @@
 # MC Agents
 
-Des agents IA autonomes qui survivent dans Minecraft. Chaque agent est un LLM (Claude, Gemini...) qui contrôle un bot Mineflayer via du code JavaScript.
+Autonomous AI agents that survive in Minecraft. Each agent is an LLM (Claude, Gemini...) that controls a Mineflayer bot via JavaScript code.
 
 ## Architecture
 
 ```
-┌─────────────┐   écrit inbox.js   ┌──────────────────┐
-│  LLM (cron)  │ ─────────────────► │ Bot Mineflayer   │
-│  Claude/etc  │ ◄───────────────── │ (Node.js)        │
-└──────┬───────┘   lit outbox.json  └────────┬─────────┘
-       │                                     │
-       ▼                                     ▼
-   MEMORY.md                          Serveur Minecraft
+┌─────────────┐   writes inbox.js   ┌──────────────────┐
+│  LLM (cron)  │ ─────────────────► │ Mineflayer Bot    │
+│  Claude/etc  │ ◄───────────────── │ (Node.js)         │
+└──────┬───────┘   reads outbox.json └────────┬─────────┘
+       │                                      │
+       ▼                                      ▼
+   MEMORY.md                          Minecraft Server
    skills/*.md
    tools/*.js
 ```
 
-1. Un **bot Mineflayer** reste connecté au serveur Minecraft (process Node.js permanent)
-2. Un **script boucle** relance un LLM à intervalles réguliers
-3. Le LLM lit ses **skills** (comment utiliser mineflayer), sa **mémoire** (ce qu'il a fait avant), son **état** (vie, faim, position) et ses **tools disponibles**
-4. Il écrit du JS dans `inbox.js`, le bot l'exécute, le résultat arrive dans `outbox.json`
-5. Si le script a marché, l'agent le sauvegarde comme **tool réutilisable** dans `tools/`
-6. Avant de finir, le LLM met à jour son `MEMORY.md`
+1. A **Mineflayer bot** stays connected to the Minecraft server (persistent Node.js process)
+2. A **loop script** relaunches an LLM at regular intervals
+3. The LLM reads its **skills** (how to use mineflayer), its **memory** (what it did before), its **state** (health, hunger, position) and its **available tools**
+4. It writes JS in `inbox.js`, the bot executes it, and the result arrives in `outbox.json`
+5. If the script worked, the agent saves it as a **reusable tool** in `tools/`
+6. Before finishing, the LLM updates its `MEMORY.md`
 
-## Tools réutilisables
+## Reusable tools
 
-Chaque agent se construit une **boîte à outils** de scripts testés et réutilisables :
+Each agent builds its own **toolbox** of tested, reusable scripts:
 
-- Quand un script fonctionne, l'agent le sauvegarde dans `agents/<name>/tools/` sous forme de module JS
-- Les tools sont **auto-chargés** au démarrage du bot et **rechargés à chaud** quand un fichier change
-- L'agent peut appeler ses tools depuis `inbox.js` : `await tools.mine({ block: 'oak_log' })`
-- Le `bot` est injecté automatiquement comme premier argument
+- When a script works, the agent saves it in `agents/<name>/tools/` as a JS module
+- Tools are **auto-loaded** at bot startup and **hot-reloaded** when a file changes
+- The agent can call its tools from `inbox.js`: `await tools.mine({ block: 'oak_log' })`
+- The `bot` is automatically injected as the first argument
 
-Format d'un tool :
+Tool format:
 ```js
-// Miner N blocs d'un type donné
+// Mine N blocks of a given type
 module.exports = async function(bot, { block, count }) {
   const mcData = require('minecraft-data')(bot.version)
   // ...
-  return 'résultat'
+  return 'result'
 }
 ```
 
-Le dernier script exécuté est conservé dans `last-action.js` pour faciliter le debug.
+The last executed script is kept in `last-action.js` for easier debugging.
 
-## Prérequis
+## Prerequisites
 
 - Node.js >= 18
-- Un serveur Minecraft (vanilla, Paper, Fabric...)
-- Un CLI LLM : [Claude Code](https://claude.com/claude-code), Gemini CLI, ou autre
-- Un compte Microsoft/Minecraft (si le serveur est en `online-mode=true`)
+- A Minecraft server (vanilla, Paper, Fabric...)
+- An LLM CLI: [Claude Code](https://claude.com/claude-code), Gemini CLI, or other
+- A Microsoft/Minecraft account (if the server has `online-mode=true`)
 
 ## Installation
 
@@ -61,41 +61,41 @@ npm install
 
 ## Configuration
 
-Copier le fichier d'environnement et l'éditer :
+Copy the environment file and edit it:
 
 ```bash
 cp .env.example .env
 ```
 
 ```env
-MC_HOST=192.168.1.39    # IP du serveur Minecraft
-MC_PORT=25565            # Port du serveur
-MC_VERSION=1.21.11       # Version du serveur
+MC_HOST=192.168.1.39    # Minecraft server IP
+MC_PORT=25565            # Server port
+MC_VERSION=1.21.11       # Server version
 ```
 
-> **Comment trouver la version ?** Lance `node -e "const mc = require('minecraft-protocol'); mc.ping({host:'TON_IP'}, (e,r) => console.log(r?.version))"`.
+> **How to find the version?** Run `node -e "const mc = require('minecraft-protocol'); mc.ping({host:'YOUR_IP'}, (e,r) => console.log(r?.version))"`.
 
-## Lancer un agent
+## Running an agent
 
 ```bash
-./run-agent.sh bob        # lance le bot + la boucle LLM
-./run-agent.sh bob 10     # limite à 10 cycles
+./run-agent.sh bob        # starts the bot + LLM loop
+./run-agent.sh bob 10     # limits to 10 cycles
 ```
 
-Le bot se connecte au serveur, et le LLM commence ses cycles : observer → décider → agir → sauver en tool → mémoriser.
+The bot connects to the server, and the LLM begins its cycles: observe → decide → act → save as tool → memorize.
 
-Pour lancer plusieurs agents en parallèle :
+To run multiple agents in parallel:
 ```bash
 ./run-agent.sh bob &
 ./run-agent.sh alice &
 ./run-agent.sh charlie &
 ```
 
-## Authentification
+## Authentication
 
-### Serveur offline (`online-mode=false`)
+### Offline server (`online-mode=false`)
 
-Dans `config.json`, seul le `username` suffit :
+In `config.json`, only the `username` is needed:
 
 ```json
 {
@@ -103,9 +103,9 @@ Dans `config.json`, seul le `username` suffit :
 }
 ```
 
-### Serveur online (compte Microsoft)
+### Online server (Microsoft account)
 
-Ajouter le champ `microsoft` avec l'email du compte :
+Add the `microsoft` field with the account email:
 
 ```json
 {
@@ -114,28 +114,28 @@ Ajouter le champ `microsoft` avec l'email du compte :
 }
 ```
 
-Au premier lancement, le bot affiche un code à entrer sur [microsoft.com/link](https://microsoft.com/link) :
+On first launch, the bot displays a code to enter at [microsoft.com/link](https://microsoft.com/link):
 
 ```
 ========================================
-  CONNEXION MICROSOFT REQUISE
+  MICROSOFT LOGIN REQUIRED
 ========================================
-  1. Ouvrir : https://www.microsoft.com/link
-  2. Entrer : ABC123XYZ
+  1. Open: https://www.microsoft.com/link
+  2. Enter: ABC123XYZ
 ========================================
 ```
 
-Les tokens sont ensuite cachés dans `.auth-cache/` — pas besoin de se re-connecter à chaque fois.
+Tokens are then cached in `.auth-cache/` — no need to re-login each time.
 
-> Chaque agent a besoin de son propre compte Microsoft (= sa propre licence Minecraft).
+> Each agent needs its own Microsoft account (= its own Minecraft license).
 
-## Créer un nouvel agent
+## Creating a new agent
 
 ```bash
 mkdir -p agents/alice/tools
 ```
 
-Créer `agents/alice/config.json` :
+Create `agents/alice/config.json`:
 ```json
 {
   "username": "Alice",
@@ -143,53 +143,53 @@ Créer `agents/alice/config.json` :
 }
 ```
 
-Créer `agents/alice/personality.md` :
+Create `agents/alice/personality.md`:
 ```markdown
-Tu t'appelles Alice. Tu es une exploratrice intrépide.
-Tu adores découvrir de nouveaux biomes et cartographier le monde.
+Your name is Alice. You are a fearless explorer.
+You love discovering new biomes and mapping the world.
 ```
 
-Créer `agents/alice/MEMORY.md` :
+Create `agents/alice/MEMORY.md`:
 ```markdown
-# Situation actuelle
-Première session. Je viens de spawner.
+# Current situation
+First session. I just spawned.
 
-# À faire
-1. Explorer les environs
+# To do
+1. Explore the surroundings
 ```
 
-Lancer :
+Launch:
 ```bash
 ./run-agent.sh alice
 ```
 
-## Utiliser un autre LLM
+## Using a different LLM
 
-Le script `run-agent.sh` utilise `claude` par défaut. Pour changer, modifier la commande dans le script :
+The `run-agent.sh` script uses `claude` by default. To change it, modify the command in the script:
 
 ```bash
 # Claude Code
 claude -p "$PROMPT" --allowedTools "Read,Write,Bash" --max-turns 15
 
-# Gemini CLI (adapter selon le CLI utilisé)
+# Gemini CLI (adapt to the CLI used)
 gemini -p "$PROMPT"
 
-# Ollama (via un wrapper CLI)
+# Ollama (via a CLI wrapper)
 ollama run llama3 "$PROMPT"
 ```
 
-Chaque agent peut utiliser un LLM différent — il suffit de dupliquer `run-agent.sh` avec la bonne commande.
+Each agent can use a different LLM — just duplicate `run-agent.sh` with the right command.
 
-## Structure du projet
+## Project structure
 
 ```
 mc-agents/
-├── .env                    # Config serveur (MC_HOST, MC_PORT, MC_VERSION)
+├── .env                    # Server config (MC_HOST, MC_PORT, MC_VERSION)
 ├── .env.example
-├── bot.js                  # Bot Mineflayer persistent (charge tools/, watch auto)
-├── run-agent.sh            # Boucle LLM (injecte tools dispo dans le prompt)
-├── system-prompt.md        # Prompt de base (commun à tous)
-├── skills/                 # Comment utiliser mineflayer (markdown)
+├── bot.js                  # Persistent Mineflayer bot (loads tools/, auto watch)
+├── run-agent.sh            # LLM loop (injects available tools into the prompt)
+├── system-prompt.md        # Base prompt (shared by all agents)
+├── skills/                 # How to use mineflayer (markdown)
 │   ├── 01-basics.md
 │   ├── 02-movement.md
 │   ├── 03-mining.md
@@ -198,25 +198,25 @@ mc-agents/
 │   └── 06-chat.md
 └── agents/
     └── bob/
-        ├── config.json     # username + microsoft (optionnel)
-        ├── personality.md  # Personnalité de l'agent
-        ├── MEMORY.md       # Mémoire persistante entre les cycles
-        ├── tools/          # Scripts JS réutilisables (créés par l'agent)
+        ├── config.json     # username + microsoft (optional)
+        ├── personality.md  # Agent personality
+        ├── MEMORY.md       # Persistent memory between cycles
+        ├── tools/          # Reusable JS scripts (created by the agent)
         │   ├── mine.js
         │   ├── scan.js
         │   └── ...
-        ├── inbox.js        # Code JS envoyé au bot (créé par le LLM)
-        ├── last-action.js  # Dernier script exécuté (debug)
-        ├── outbox.json     # Résultat de l'exécution (créé par le bot)
-        └── status.json     # État en temps réel (créé par le bot)
+        ├── inbox.js        # JS code sent to the bot (created by the LLM)
+        ├── last-action.js  # Last executed script (debug)
+        ├── outbox.json     # Execution result (created by the bot)
+        └── status.json     # Real-time state (created by the bot)
 ```
 
-## Dépannage
+## Troubleshooting
 
-| Problème | Solution |
-|----------|----------|
-| `ECONNREFUSED` | Le serveur Minecraft ne tourne pas ou mauvaise IP/port dans `.env` |
-| `unverified_username` | Ajouter `"microsoft": "email@outlook.com"` dans le `config.json` de l'agent, ou mettre `online-mode=false` sur le serveur |
-| `Cannot read properties of null (reading 'version')` | La version dans `.env` n'est pas supportée — mettre à jour mineflayer (`npm install mineflayer@latest`) |
-| Le bot ne fait rien | Vérifier que `inbox.js` est bien écrit dans le bon dossier agent |
-| `duplicate_login` | Un autre bot utilise déjà ce username — tuer le process existant |
+| Problem | Solution |
+|---------|----------|
+| `ECONNREFUSED` | The Minecraft server is not running or wrong IP/port in `.env` |
+| `unverified_username` | Add `"microsoft": "email@outlook.com"` in the agent's `config.json`, or set `online-mode=false` on the server |
+| `Cannot read properties of null (reading 'version')` | The version in `.env` is not supported — update mineflayer (`npm install mineflayer@latest`) |
+| The bot does nothing | Check that `inbox.js` is written in the correct agent folder |
+| `duplicate_login` | Another bot is already using this username — kill the existing process |

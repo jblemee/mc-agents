@@ -1,31 +1,31 @@
-### Crafter un objet (sans table de craft)
+### Craft an item (without a crafting table)
 
 ```js
-const item = 'oak_planks'  // recettes simples (2x2)
+const item = 'oak_planks'  // simple recipes (2x2)
 const recipe = bot.recipesFor(mcData.itemsByName[item].id, null, 1, null)
-if (!recipe.length) return `Pas de recette trouvée pour ${item} (ou ingrédients manquants)`
-await bot.craft(recipe[0], 1, null)  // null = sans table
-return `${item} crafté`
+if (!recipe.length) return `No recipe found for ${item} (or missing ingredients)`
+await bot.craft(recipe[0], 1, null)  // null = no table
+return `${item} crafted`
 ```
 
-### Crafter avec une table de craft
+### Craft with a crafting table
 
 ```js
-const item = 'wooden_pickaxe'  // recettes complexes (3x3)
+const item = 'wooden_pickaxe'  // complex recipes (3x3)
 
-// Trouver ou poser une table de craft
+// Find or place a crafting table
 let table = bot.findBlock({
   matching: mcData.blocksByName['crafting_table']?.id,
   maxDistance: 32,
 })
 
 if (!table) {
-  // Crafter une table d'abord (il faut des planches)
+  // Craft a table first (requires planks)
   const planksRecipe = bot.recipesFor(mcData.itemsByName['crafting_table'].id, null, 1, null)
   if (planksRecipe.length) {
     await bot.craft(planksRecipe[0], 1, null)
   }
-  // Poser la table
+  // Place the table
   const pos = bot.entity.position.offset(1, 0, 0)
   const refBlock = bot.blockAt(bot.entity.position.offset(1, -1, 0))
   await bot.placeBlock(refBlock, require('vec3')(0, 1, 0))
@@ -35,15 +35,15 @@ if (!table) {
   })
 }
 
-if (!table) return 'Impossible de trouver/poser une table de craft'
+if (!table) return 'Unable to find/place a crafting table'
 
 const recipe = bot.recipesFor(mcData.itemsByName[item].id, null, 1, table)
-if (!recipe.length) return `Pas de recette pour ${item} ou ingrédients manquants`
+if (!recipe.length) return `No recipe for ${item} or missing ingredients`
 await bot.craft(recipe[0], 1, table)
-return `${item} crafté`
+return `${item} crafted`
 ```
 
-### Lister les recettes disponibles avec l'inventaire actuel
+### List available recipes with current inventory
 
 ```js
 const craftable = []
@@ -51,5 +51,5 @@ for (const [name, item] of Object.entries(mcData.itemsByName)) {
   const recipes = bot.recipesFor(item.id, null, 1, null)
   if (recipes.length > 0) craftable.push(name)
 }
-return `Craftable sans table: ${craftable.join(', ') || 'rien'}`
+return `Craftable without table: ${craftable.join(', ') || 'nothing'}`
 ```

@@ -1,4 +1,4 @@
-### Manger
+### Eat
 
 ```js
 const food = bot.inventory.items().find(i =>
@@ -6,20 +6,20 @@ const food = bot.inventory.items().find(i =>
    'cooked_mutton', 'cooked_salmon', 'baked_potato', 'cooked_rabbit',
    'golden_apple', 'carrot', 'melon_slice', 'sweet_berries'].includes(i.name)
 )
-if (!food) return 'Pas de nourriture dans inventaire'
+if (!food) return 'No food in inventory'
 await bot.equip(food, 'hand')
 await bot.consume()
-return `Mangé ${food.name} | Santé: ${bot.health} | Faim: ${bot.food}`
+return `Ate ${food.name} | Health: ${bot.health} | Hunger: ${bot.food}`
 ```
 
-### Tuer un animal pour de la nourriture
+### Kill an animal for food
 
 ```js
 const animals = Object.values(bot.entities).filter(e =>
   ['cow', 'pig', 'chicken', 'sheep', 'rabbit'].includes(e.name) &&
   e.position.distanceTo(bot.entity.position) < 32
 )
-if (!animals.length) return 'Pas d\'animaux proches'
+if (!animals.length) return 'No animals nearby'
 
 const target = animals[0]
 const { goals: { GoalFollow } } = require('mineflayer-pathfinder')
@@ -27,7 +27,7 @@ const { Movements } = require('mineflayer-pathfinder')
 bot.pathfinder.setMovements(new Movements(bot))
 bot.pathfinder.setGoal(new GoalFollow(target, 1), true)
 
-// Attaquer jusqu'à ce que le mob meure
+// Attack until the mob dies
 while (target.isValid) {
   if (bot.entity.position.distanceTo(target.position) < 3) {
     await bot.attack(target)
@@ -35,36 +35,36 @@ while (target.isValid) {
   await new Promise(r => setTimeout(r, 500))
 }
 bot.pathfinder.setGoal(null)
-return `${target.name} tué, récupère le loot`
+return `${target.name} killed, pick up the loot`
 ```
 
-### Se mettre à l'abri la nuit (pillar up simple)
+### Take shelter at night (simple pillar up)
 
 ```js
-if (bot.time.timeOfDay < 13000) return 'Il fait encore jour'
+if (bot.time.timeOfDay < 13000) return 'It is still daytime'
 
-// Construire un abri minimal : pilier de 3 blocs + dalle dessus
+// Build a minimal shelter: 3-block pillar + slab on top
 const pos = bot.entity.position
 for (let i = 0; i < 3; i++) {
   const below = bot.blockAt(bot.entity.position.offset(0, -1, 0))
   const dirt = bot.inventory.items().find(i => ['dirt', 'cobblestone', 'oak_planks'].includes(i.name))
-  if (!dirt) return 'Pas de blocs pour construire un abri'
+  if (!dirt) return 'No blocks to build a shelter'
   await bot.equip(dirt, 'hand')
   await bot.placeBlock(below, require('vec3')(0, 1, 0))
-  // Le bot monte automatiquement
+  // The bot climbs automatically
   await new Promise(r => setTimeout(r, 300))
 }
-return 'Abri de fortune construit (pilier)'
+return 'Emergency shelter built (pillar)'
 ```
 
-### Dormir dans un lit
+### Sleep in a bed
 
 ```js
 const bed = bot.findBlock({
   matching: (block) => block.name.includes('bed'),
   maxDistance: 32,
 })
-if (!bed) return 'Pas de lit trouvé'
+if (!bed) return 'No bed found'
 
 const { goals: { GoalNear } } = require('mineflayer-pathfinder')
 const { Movements } = require('mineflayer-pathfinder')
@@ -74,8 +74,8 @@ await new Promise(resolve => bot.once('goal_reached', resolve))
 
 try {
   await bot.sleep(bed)
-  return 'Endormi dans le lit'
+  return 'Sleeping in the bed'
 } catch(e) {
-  return `Impossible de dormir: ${e.message}`
+  return `Cannot sleep: ${e.message}`
 }
 ```

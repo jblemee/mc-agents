@@ -18,13 +18,13 @@ build_prompt() {
 
     # Agent personality
     if [ -f "$AGENT_DIR/personality.md" ]; then
-      echo "## Ta personnalité"
+      echo "## Your personality"
       cat "$AGENT_DIR/personality.md"
       echo ""
     fi
 
     # Skills
-    echo "## Skills disponibles"
+    echo "## Available skills"
     for skill in "$SCRIPT_DIR"/skills/*.md; do
       [ -f "$skill" ] && cat "$skill"
       echo ""
@@ -32,14 +32,14 @@ build_prompt() {
 
     # Memory
     if [ -f "$AGENT_DIR/MEMORY.md" ]; then
-      echo "## Ta mémoire (de tes sessions précédentes)"
+      echo "## Your memory (from previous sessions)"
       cat "$AGENT_DIR/MEMORY.md"
       echo ""
     fi
 
     # Current status
     if [ -f "$AGENT_DIR/status.json" ]; then
-      echo "## Ton état actuel"
+      echo "## Your current state"
       echo '```json'
       cat "$AGENT_DIR/status.json"
       echo '```'
@@ -48,7 +48,7 @@ build_prompt() {
 
     # Last action result
     if [ -f "$AGENT_DIR/outbox.json" ]; then
-      echo "## Résultat de ta dernière action"
+      echo "## Result of your last action"
       echo '```json'
       cat "$AGENT_DIR/outbox.json"
       echo '```'
@@ -57,7 +57,7 @@ build_prompt() {
 
     # Events (attacks, chat, etc.)
     if [ -f "$AGENT_DIR/events.json" ] && [ -s "$AGENT_DIR/events.json" ]; then
-      echo "## Événements récents"
+      echo "## Recent events"
       echo '```json'
       cat "$AGENT_DIR/events.json"
       echo '```'
@@ -66,18 +66,18 @@ build_prompt() {
 
     # Chat messages
     if [ -f "$AGENT_DIR/chat.json" ] && [ -s "$AGENT_DIR/chat.json" ]; then
-      echo "## Messages reçus dans le chat"
+      echo "## Chat messages received"
       echo '```json'
       cat "$AGENT_DIR/chat.json"
       echo '```'
-      echo "Réponds aux messages avec bot.chat('ton message'). Sois social et amical !"
+      echo "Reply to messages with bot.chat('your message'). Be social and friendly!"
       echo ""
     fi
 
     # Available tools
     if [ -d "$AGENT_DIR/tools" ] && ls "$AGENT_DIR/tools"/*.js >/dev/null 2>&1; then
-      echo "## Tools disponibles"
-      echo "Tu peux appeler ces tools dans inbox.js avec \`await tools.nom({ ...args })\`"
+      echo "## Available tools"
+      echo "You can call these tools in inbox.js with \`await tools.name({ ...args })\`"
       echo ""
       for tool_file in "$AGENT_DIR/tools"/*.js; do
         tool_name=$(basename "$tool_file" .js)
@@ -93,11 +93,11 @@ build_prompt() {
     fi
 
     # Paths
-    echo "## Chemins"
-    echo "- Écrire tes actions JS dans : $AGENT_DIR/inbox.js"
-    echo "- Lire les résultats dans : $AGENT_DIR/outbox.json"
-    echo "- Mettre à jour ta mémoire dans : $AGENT_DIR/MEMORY.md"
-    echo "- Créer des tools réutilisables dans : $AGENT_DIR/tools/"
+    echo "## Paths"
+    echo "- Write your JS actions in: $AGENT_DIR/inbox.js"
+    echo "- Read results from: $AGENT_DIR/outbox.json"
+    echo "- Update your memory in: $AGENT_DIR/MEMORY.md"
+    echo "- Create reusable tools in: $AGENT_DIR/tools/"
 
   } > "$file"
 
@@ -139,7 +139,7 @@ while true; do
   start_bot  # ensure bot is running (auto-restart if crashed)
   PROMPT_FILE=$(build_prompt)
 
-  # Launch Claude Code (haiku = rapide et pas cher)
+  # Launch Claude Code
   claude -p "$(cat "$PROMPT_FILE")" \
     --model sonnet \
     --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
@@ -173,24 +173,24 @@ for block in d.get('message',{}).get('content',[]):
   echo "--- Updating memory ---"
   MEMORY_FILE="$AGENT_DIR/.memory-prompt.txt"
   {
-    echo "Analyse ce log d'un agent Minecraft et mets à jour sa mémoire."
+    echo "Analyze this Minecraft agent log and update its memory."
     echo ""
-    echo "=== LOG DU CYCLE ==="
+    echo "=== CYCLE LOG ==="
     cat "$AGENT_DIR/last-run.log" 2>/dev/null
     echo ""
-    echo "=== ÉTAT ACTUEL ==="
+    echo "=== CURRENT STATE ==="
     cat "$AGENT_DIR/status.json" 2>/dev/null
     echo ""
-    echo "=== DERNIER RÉSULTAT ==="
+    echo "=== LAST RESULT ==="
     cat "$AGENT_DIR/outbox.json" 2>/dev/null
     echo ""
-    echo "=== MÉMOIRE ACTUELLE ==="
+    echo "=== CURRENT MEMORY ==="
     cat "$AGENT_DIR/MEMORY.md" 2>/dev/null
     echo ""
-    echo "=== INSTRUCTION ==="
-    echo "Écris un MEMORY.md mis à jour avec l'outil Write dans le fichier : $AGENT_DIR/MEMORY.md"
-    echo "Inclus : position, inventaire, santé, leçons apprises (erreurs, zones protégées, etc.), plan pour la suite."
-    echo "Sois concis mais complet. L'agent n'a QUE ce fichier comme mémoire entre ses sessions."
+    echo "=== INSTRUCTIONS ==="
+    echo "Write an updated MEMORY.md using the Write tool to the file: $AGENT_DIR/MEMORY.md"
+    echo "Include: position, inventory, health, lessons learned (errors, protected zones, etc.), plan for next steps."
+    echo "Be concise but thorough. The agent has ONLY this file as memory between sessions."
   } > "$MEMORY_FILE"
 
   claude -p "$(cat "$MEMORY_FILE")" \

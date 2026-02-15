@@ -34,10 +34,10 @@ if (agentConfig.microsoft) {
   }, (data) => {
     console.log('')
     console.log('========================================')
-    console.log('  CONNEXION MICROSOFT REQUISE')
+    console.log('  MICROSOFT LOGIN REQUIRED')
     console.log('========================================')
-    console.log(`  1. Ouvrir : ${data.verification_uri}`)
-    console.log(`  2. Entrer : ${data.user_code}`)
+    console.log(`  1. Open: ${data.verification_uri}`)
+    console.log(`  2. Enter: ${data.user_code}`)
     console.log('========================================')
     console.log('')
   })
