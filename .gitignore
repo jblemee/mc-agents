@@ -1,0 +1,20 @@
+node_modules/
+.env
+.auth-cache/
+
+# Agent runtime files (generated per session)
+agents/*/status.json
+agents/*/outbox.json
+agents/*/chat.json
+agents/*/events.json
+agents/*/inbox.js
+agents/*/last-action.js
+agents/*/last-run.log
+agents/*/urgent
+agents/*/MEMORY.md
+agents/*/.prompt.md
+agents/*/.memory-prompt.txt
+
+# Agent tools are created by agents at runtime
+agents/*/tools/*.js
+.idea/

@@ -1,0 +1,16 @@
+{
+  "name": "mc-agents",
+  "version": "0.1.0",
+  "description": "Minecraft AI civilization - LLM agents via Mineflayer",
+  "scripts": {
+    "bot": "node bot.js",
+    "bob": "bash run-agent.sh bob"
+  },
+  "dependencies": {
+    "minecraft-data": "^3.69.0",
+    "mineflayer": "^4.35.0",
+    "mineflayer-collectblock": "^1.4.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.1.10"
+  }
+}
