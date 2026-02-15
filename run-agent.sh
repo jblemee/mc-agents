@@ -11,7 +11,7 @@ fi
 
 AGENT_NAME="${1:-bob}"
 MAX_LOOPS="${2:-0}"  # 0 = infinite
-LLM="${3:-glm}"      # glm, claude, or gemini
+LLM="${3:-glm}"      # glm, claude, sonnet, haiku, gemini
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
 PAUSE=10  # seconds between cycles
@@ -177,8 +177,12 @@ while true; do
       --output-format stream-json \
       2>&1
   else
+    # claude, sonnet, haiku all use Claude Code with different models
+    CLAUDE_MODEL="sonnet"
+    [ "$LLM" = "haiku" ] && CLAUDE_MODEL="haiku"
+    [ "$LLM" = "opus" ] && CLAUDE_MODEL="opus"
     claude -p "$(cat "$PROMPT_FILE")" \
-      --model sonnet \
+      --model "$CLAUDE_MODEL" \
       --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
       --dangerously-skip-permissions \
       --max-turns 20 \
