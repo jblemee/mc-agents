@@ -78,17 +78,23 @@ MC_VERSION=1.21.11       # Server version
 ## Running an agent
 
 ```bash
-./run-agent.sh bob        # starts the bot + LLM loop
-./run-agent.sh bob 10     # limits to 10 cycles
+./run-agent.sh bob              # default LLM (glm)
+./run-agent.sh bob 0 glm        # GLM 4.7 via BigModel API
+./run-agent.sh bob 0 claude      # Claude via Anthropic API
+./run-agent.sh bob 0 gemini      # Gemini via Google CLI
+./run-agent.sh bob 10            # limit to 10 cycles
 ```
 
 The bot connects to the server, and the LLM begins its cycles: observe → decide → act → save as tool → memorize.
 
-To run multiple agents in parallel:
+To run multiple agents in parallel (tmux recommended):
 ```bash
-./run-agent.sh bob &
-./run-agent.sh alice &
-./run-agent.sh charlie &
+tmux new-session -d -s agents './run-agent.sh alice 0 glm' \; \
+  split-window -h './run-agent.sh bob 0 glm' \; \
+  split-window -v './run-agent.sh charlie 0 glm' \; \
+  select-pane -t 0 \; \
+  split-window -v './run-agent.sh dave 0 glm' \; \
+  attach
 ```
 
 ## Authentication
@@ -163,22 +169,17 @@ Launch:
 ./run-agent.sh alice
 ```
 
-## Using a different LLM
+## LLM backends
 
-The `run-agent.sh` script uses `claude` by default. To change it, modify the command in the script:
+The 3rd argument to `run-agent.sh` selects the LLM backend:
 
-```bash
-# Claude Code
-claude -p "$PROMPT" --allowedTools "Read,Write,Bash" --max-turns 15
+| Backend | CLI required | Setup |
+|---------|-------------|-------|
+| `glm` (default) | [GLM CLI](https://github.com/xqsit94/glm) | `glm token set` |
+| `claude` | [Claude Code](https://claude.com/claude-code) | Anthropic API key |
+| `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` in `.env` or Google auth |
 
-# Gemini CLI (adapt to the CLI used)
-gemini -p "$PROMPT"
-
-# Ollama (via a CLI wrapper)
-ollama run llama3 "$PROMPT"
-```
-
-Each agent can use a different LLM — just duplicate `run-agent.sh` with the right command.
+Each agent can use a different LLM — just pass a different 3rd argument.
 
 ## Project structure
 

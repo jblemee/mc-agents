@@ -13,8 +13,11 @@ Autonomous AI agents that survive in Minecraft. Each agent is an LLM (Claude, Ge
 npm install
 
 # Run an agent (starts bot + LLM loop)
-./run-agent.sh bob          # infinite cycles
-./run-agent.sh bob 10       # limit to 10 cycles
+./run-agent.sh bob              # default LLM (glm)
+./run-agent.sh bob 0 glm        # GLM via BigModel
+./run-agent.sh bob 0 claude      # Claude via Anthropic
+./run-agent.sh bob 0 gemini      # Gemini via Google
+./run-agent.sh bob 10            # limit to 10 cycles
 
 # Run just the bot process (no LLM loop)
 node bot.js bob
@@ -30,7 +33,7 @@ The system has two processes per agent:
 
 1. **`bot.js`** — Persistent Node.js process running a Mineflayer bot. Polls `agents/<name>/inbox.js` every 500ms, `eval()`s the code with `bot`, `mcData`, `Goals`, `Movements`, and `tools` in scope, writes results to `outbox.json`. Has a 60-second timeout per action. Also writes `status.json` (health/food/position) and logs events (chat, damage, death) to `events.json` and `chat.json`.
 
-2. **`run-agent.sh`** — Bash loop that assembles a prompt from `system-prompt.md` + `personality.md` + `skills/*.md` + `MEMORY.md` + current state files, then calls `claude -p` with that prompt. After each cycle, a secondary haiku call updates the agent's `MEMORY.md`. The loop auto-restarts the bot if it crashes and wakes early on urgent events (chat, damage).
+2. **`run-agent.sh`** — Bash loop that assembles a prompt from `system-prompt.md` + `personality.md` + `skills/*.md` + `MEMORY.md` + current state files, then calls the selected LLM (glm/claude/gemini) with that prompt. After each cycle, a secondary LLM call updates the agent's `MEMORY.md`. The loop auto-restarts the bot if it crashes and wakes early on urgent events (chat, damage).
 
 ### Agent file-based communication protocol
 - `inbox.js` — LLM writes JS here; bot consumes it (renamed to `last-action.js`)

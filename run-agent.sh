@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: ./run-agent.sh bob [max_loops] [llm]
-# llm: claude (default), gemini
+# llm: glm (default), claude, gemini
 unset CLAUDECODE
 
 # Load .env (for GEMINI_API_KEY, etc.)
@@ -11,10 +11,22 @@ fi
 
 AGENT_NAME="${1:-bob}"
 MAX_LOOPS="${2:-0}"  # 0 = infinite
-LLM="${3:-gemini}"   # claude or gemini
+LLM="${3:-glm}"      # glm, claude, or gemini
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
 PAUSE=10  # seconds between cycles
+
+# GLM config
+GLM_CONFIG="$HOME/.glm/config.json"
+if [ "$LLM" = "glm" ]; then
+  if [ -f "$GLM_CONFIG" ]; then
+    GLM_TOKEN=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG'))['anthropic_auth_token'])" 2>/dev/null)
+    GLM_MODEL=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG')).get('default_model','glm-4.7'))" 2>/dev/null)
+  else
+    echo "ERROR: GLM config not found at $GLM_CONFIG. Run 'glm token set' first."
+    exit 1
+  fi
+fi
 
 # Build the prompt and write to a temp file
 build_prompt() {
@@ -135,7 +147,7 @@ start_bot() {
 # Cleanup on exit
 trap 'kill $BOT_PID 2>/dev/null' EXIT
 
-echo "=== Agent $AGENT_NAME starting ==="
+echo "=== Agent $AGENT_NAME starting (LLM: $LLM) ==="
 echo "Agent dir: $AGENT_DIR"
 
 loop=0
@@ -152,6 +164,16 @@ while true; do
     gemini -p "$(cat "$PROMPT_FILE")" \
       --model gemini-3-pro-preview \
       --yolo \
+      --output-format stream-json \
+      2>&1
+  elif [ "$LLM" = "glm" ]; then
+    ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
+    ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
+    claude -p "$(cat "$PROMPT_FILE")" \
+      --model "$GLM_MODEL" \
+      --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
+      --dangerously-skip-permissions \
+      --max-turns 20 \
       --output-format stream-json \
       2>&1
   else
@@ -229,6 +251,16 @@ elif t == 'assistant':
     gemini -p "$(cat "$MEMORY_FILE")" \
       --model gemini-3-flash-preview \
       --yolo \
+      --output-format text \
+      2>&1 | tail -1
+  elif [ "$LLM" = "glm" ]; then
+    ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
+    ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
+    claude -p "$(cat "$MEMORY_FILE")" \
+      --model "$GLM_MODEL" \
+      --allowedTools "Write" \
+      --dangerously-skip-permissions \
+      --max-turns 4 \
       --output-format text \
       2>&1 | tail -1
   else
