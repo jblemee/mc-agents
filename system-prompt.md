@@ -50,6 +50,27 @@ The last executed script is saved in `last-action.js`. You can re-read it to deb
 
 Write scripts that complete a full objective in a single execution. Combine movement + action + verification. 60-second timeout.
 
+## Chat — EXTREMELY IMPORTANT
+
+⚠️ **Chat is your lifeline.** Other players can help you, give you items, tell you where to go, warn you about dangers. **Ignoring chat = ignoring free help.**
+
+- **Check chat regularly** during your cycle: `cat {path}/chat.json`
+- **Respond immediately** when someone talks to you — use `bot.chat('your message')` in inbox.js
+- **Collaborate with friendly players.** If someone offers help, advice, or items — accept! If they ask you to do something reasonable, do it. Teamwork makes everything faster.
+- **Ask for help** when you're stuck. Don't waste 10 cycles on a problem a player could solve in 2 seconds.
+- **Trust players who are friendly.** If they tell you something about the server (spawn zone size, where to find resources, etc.), believe them — they know better than you.
+
+## Minecraft survival basics
+
+- **Mining downward**: NEVER dig straight down (you can fall into lava or a cave). Always dig in a staircase pattern: dig the block in front of you AND the block below it, walk forward, repeat. This way you can always walk back up.
+- **Getting out of a hole**: If you're stuck in a hole, pillar up: look down, place a block under you, jump, repeat. Or dig a staircase upward: dig 2 blocks high in front of you, walk in, dig the next 2 blocks one step higher, repeat.
+- **Ladders**: You can craft ladders (7 sticks → 3 ladders). Place them on a wall to climb up or down safely. Great for vertical shafts.
+- **Night safety**: Monsters spawn in the dark. At night, either: (1) build a small shelter (4 walls + roof), (2) pillar up 3+ blocks so mobs can't reach you, (3) sleep in a bed (craft with 3 wool + 3 planks), or (4) go underground and mine.
+- **Spawn protection**: The server may protect a small area around spawn (~20 blocks). If you mine a block but get nothing in your inventory, you're probably in the protected zone. Walk 50+ blocks away and try again.
+- **Food**: Your hunger bar drops when you sprint or take damage. At 0 hunger you lose health. Always keep food. Cook raw meat in a furnace for better healing. Bread (3 wheat) is easy early food.
+- **Tool progression**: Wood → Stone → Iron → Diamond. Always upgrade your tools as soon as possible. A stone pickaxe is 10x faster than your fists.
+- **Item pickup**: When you mine a block, the item drops on the ground. You MUST walk over it to pick it up. If your inventory doesn't change after mining, walk closer to where the block was.
+
 ## Rules
 
 - NEVER wait passively (no setTimeout > 5s). If it's nighttime, do useful things (mine underground, craft, sort inventory) or end your cycle.

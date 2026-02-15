@@ -194,7 +194,7 @@ const EVENTS_FILE = path.join(AGENT_DIR, 'events.json')
 
 function pushEvent(event) {
   const events = fs.existsSync(EVENTS_FILE) ? JSON.parse(fs.readFileSync(EVENTS_FILE, 'utf8')) : []
-  events.push({ ...event, time: Date.now() })
+  events.push({ ...event, time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })
   while (events.length > 20) events.shift()
   fs.writeFileSync(EVENTS_FILE, JSON.stringify(events, null, 2))
 }
@@ -209,7 +209,7 @@ function triggerUrgent(reason) {
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   const chat = fs.existsSync(CHAT_FILE) ? JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8')) : []
-  chat.push({ from: username, message, time: Date.now() })
+  chat.push({ from: username, message, time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })
   while (chat.length > 20) chat.shift()
   fs.writeFileSync(CHAT_FILE, JSON.stringify(chat, null, 2))
   pushEvent({ type: 'chat', from: username, message })
