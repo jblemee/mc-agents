@@ -14,7 +14,8 @@ MAX_LOOPS="${2:-0}"
 LLM="${3:-glm}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
-PAUSE=10
+PAUSE=5
+MAX_ACTIONS=5  # actions per cycle before memory update
 
 # GLM config
 GLM_CONFIG="$HOME/.glm/config.json"
@@ -35,16 +36,15 @@ CLAUDE_MODEL="sonnet"
 [ "$LLM" = "haiku" ] && CLAUDE_MODEL="haiku"
 [ "$LLM" = "opus"  ] && CLAUDE_MODEL="opus"
 
-ACTOR_TOOLS="Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),Bash(grep:*),Bash(cp:*),Bash(wc:*),Bash(node:*),Bash(python3:*),WebSearch,WebFetch"
+# Actor only needs Write (inbox.js + tools) and Read (debug/docs)
+ACTOR_TOOLS="Read,Write,WebSearch,WebFetch"
 
 # ── Helper: call LLM as a sub-agent (memory update)
-# Uses haiku for Claude backends, same model for GLM
-# Args: prompt_file allowed_tools max_turns
 call_subagent() {
   local prompt_file="$1"
   local allowed_tools="${2:-Write}"
   local max_turns="${3:-4}"
-  local timeout_sec=90  # kill subagent if it hangs
+  local timeout_sec=90
 
   if [ "$LLM" = "glm" ]; then
     timeout "$timeout_sec" \
@@ -97,19 +97,17 @@ generate_tool_catalog() {
   fi
 }
 
-# ── Phase A: ACTOR prompt (single prompt with inline state)
+# ── Build actor prompt with current state
 build_actor_prompt() {
   local file="$AGENT_DIR/.prompt.md"
   {
     cat "$SCRIPT_DIR/system-prompt.md"
     echo ""
 
-    # Role
     echo "## Your role"
     [ -f "$AGENT_DIR/personality.md" ] && cat "$AGENT_DIR/personality.md" || echo "(no personality)"
     echo ""
 
-    # Current state (inline — no separate observer)
     echo "## Current state"
     echo ""
     echo "### status.json"
@@ -125,7 +123,6 @@ build_actor_prompt() {
     ([ -f "$AGENT_DIR/chat.json" ] && [ -s "$AGENT_DIR/chat.json" ] && cat "$AGENT_DIR/chat.json") || echo "[]"
     echo ""
 
-    # Tool catalog (generated from .meta)
     echo "$TOOL_CATALOG"
     echo ""
 
@@ -135,21 +132,19 @@ build_actor_prompt() {
       echo ""
     fi
 
-    # Memory
     echo "## Your memory"
     [ -f "$AGENT_DIR/MEMORY.md" ] && cat "$AGENT_DIR/MEMORY.md" || echo "(empty)"
     echo ""
 
-    echo "## Paths"
-    echo "- Actions: $AGENT_DIR/inbox.js"
-    echo "- Results: $AGENT_DIR/outbox.json"
-    echo "- Memory:  $AGENT_DIR/MEMORY.md"
-    echo "- New tools: $AGENT_DIR/tools/<name>.js"
+    echo "## Action"
+    echo "Write your JavaScript action to: $AGENT_DIR/inbox.js"
+    echo "The result will be provided in the next prompt. Do NOT use Bash to check results."
+    echo "If you have nothing to do, just respond with text (no Write)."
   } > "$file"
   echo "$file"
 }
 
-# ── Phase B: MEMORY prompt
+# ── Build memory prompt
 build_memory_prompt() {
   local file="$AGENT_DIR/.memory-prompt.txt"
   {
@@ -172,6 +167,103 @@ build_memory_prompt() {
     echo "Be concise. Max 100 lines."
   } > "$file"
   echo "$file"
+}
+
+# ── Call actor LLM (returns after LLM finishes, inbox.js may or may not exist)
+call_actor() {
+  local prompt_file="$1"
+  local timeout_sec=120
+
+  if [ "$LLM" = "gemini" ]; then
+    timeout "$timeout_sec" \
+    gemini -p "$(cat "$prompt_file")" \
+      --model gemini-3-pro-preview \
+      --yolo \
+      --output-format stream-json \
+      2>&1
+  elif [ "$LLM" = "glm" ]; then
+    timeout "$timeout_sec" \
+    env ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
+        ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
+    claude -p "$(cat "$prompt_file")" \
+      --model "$GLM_MODEL" \
+      --allowedTools "$ACTOR_TOOLS" \
+      --dangerously-skip-permissions \
+      --max-turns 4 \
+      --output-format stream-json \
+      2>&1
+  else
+    timeout "$timeout_sec" \
+    claude -p "$(cat "$prompt_file")" \
+      --model "$CLAUDE_MODEL" \
+      --allowedTools "$ACTOR_TOOLS" \
+      --dangerously-skip-permissions \
+      --max-turns 4 \
+      --output-format stream-json \
+      2>&1
+  fi
+}
+
+# ── Parse LLM stream-json for logging
+parse_llm_output() {
+  python3 -c "
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        d = json.loads(line)
+    except: continue
+    t = d.get('type','')
+    if t == 'assistant':
+        for block in d.get('message',{}).get('content',[]):
+            if block.get('type') == 'text' and block.get('text','').strip():
+                print('[THINK]', block['text'][:200])
+            elif block.get('type') == 'tool_use':
+                name = block.get('name','')
+                inp = block.get('input',{})
+                if name in ('Write','WriteFile'):
+                    print(f'[WRITE] {inp.get(\"file_path\",\"\")}')
+                elif name in ('Read','ReadFile'):
+                    print(f'[READ] {inp.get(\"file_path\",\"\")}')
+                elif name in ('WebSearch',):
+                    print(f'[SEARCH] {inp.get(\"query\",\"\")[:80]}')
+    elif t == 'tool_result' and d.get('status') == 'error':
+        print(f'[ERROR] {d.get(\"output\",\"\")[:120]}')
+" 2>/dev/null
+}
+
+# ── Wait for bot to consume inbox.js and write outbox.json
+wait_for_execution() {
+  local old_mtime="$1"
+  local timeout=135  # slightly more than bot's 120s timeout
+  local start=$(date +%s)
+
+  # Wait for inbox.js to be consumed (bot renames it to last-action.js)
+  while [ -f "$AGENT_DIR/inbox.js" ]; do
+    sleep 1
+    if [ $(($(date +%s) - start)) -ge $timeout ]; then
+      echo "  [timeout: bot never consumed inbox.js]"
+      rm -f "$AGENT_DIR/inbox.js"
+      return 1
+    fi
+  done
+
+  # Wait for outbox.json to be updated (mtime changes)
+  while true; do
+    local new_mtime
+    new_mtime=$(stat -f %m "$AGENT_DIR/outbox.json" 2>/dev/null || echo "0")
+    if [ "$new_mtime" != "$old_mtime" ]; then
+      sleep 1  # small buffer for file write to complete
+      break
+    fi
+    sleep 1
+    if [ $(($(date +%s) - start)) -ge $timeout ]; then
+      echo "  [timeout: outbox.json never updated]"
+      return 1
+    fi
+  done
+  return 0
 }
 
 # ── Start bot process with auto-restart
@@ -209,58 +301,47 @@ while true; do
 
   start_bot
 
-  # ── Phase A: Actor (main LLM — reads state, plans, writes JS)
-  echo "--- [1/2] Actor ---"
-  ACTOR_PROMPT=$(build_actor_prompt)
+  # Clear log for this cycle
+  : > "$AGENT_DIR/last-run.log"
 
-  if [ "$LLM" = "gemini" ]; then
-    gemini -p "$(cat "$ACTOR_PROMPT")" \
-      --model gemini-3-pro-preview \
-      --yolo \
-      --output-format stream-json \
-      2>&1
-  elif [ "$LLM" = "glm" ]; then
-    ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
-    ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
-    claude -p "$(cat "$ACTOR_PROMPT")" \
-      --model "$GLM_MODEL" \
-      --allowedTools "$ACTOR_TOOLS" \
-      --dangerously-skip-permissions \
-      --max-turns 12 \
-      --output-format stream-json \
-      2>&1
-  else
-    claude -p "$(cat "$ACTOR_PROMPT")" \
-      --model "$CLAUDE_MODEL" \
-      --allowedTools "$ACTOR_TOOLS" \
-      --dangerously-skip-permissions \
-      --max-turns 12 \
-      --output-format stream-json \
-      2>&1
-  fi | while IFS= read -r line; do
-    echo "$line" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except: sys.exit()
-t = d.get('type','')
-if t == 'assistant':
-    for block in d.get('message',{}).get('content',[]):
-        if block.get('type') == 'text' and block.get('text','').strip():
-            print('[THINK]', block['text'][:200])
-        elif block.get('type') == 'tool_use':
-            name = block.get('name','')
-            inp = block.get('input',{})
-            if name in ('Write','WriteFile'): print(f'[WRITE] {inp.get(\"file_path\",\"\")}')
-            elif name in ('Bash','Shell'): print(f'[BASH] {inp.get(\"command\",\"\")[:120]}')
-            elif name in ('Read','ReadFile'): print(f'[READ] {inp.get(\"file_path\",\"\")}')
-elif t == 'tool_result' and d.get('status') == 'error':
-    print(f'[ERROR] {d.get(\"output\",\"\")[:120]}')
+  # ── Action loop: LLM thinks → writes inbox.js → bot executes → repeat
+  for action_num in $(seq 1 $MAX_ACTIONS); do
+    echo "--- Action $action_num/$MAX_ACTIONS ---"
+
+    # Record outbox mtime before LLM call
+    OUTBOX_MTIME=$(stat -f %m "$AGENT_DIR/outbox.json" 2>/dev/null || echo "0")
+
+    # Build fresh prompt with latest state
+    ACTOR_PROMPT=$(build_actor_prompt)
+
+    # Call LLM — it thinks and writes inbox.js (or not)
+    call_actor "$ACTOR_PROMPT" | parse_llm_output | tee -a "$AGENT_DIR/last-run.log"
+
+    # Did the LLM write inbox.js?
+    if [ ! -f "$AGENT_DIR/inbox.js" ]; then
+      echo "  [no action written — ending cycle]"
+      break
+    fi
+
+    # Wait for bot to execute
+    echo "  [waiting for bot...]"
+    if wait_for_execution "$OUTBOX_MTIME"; then
+      # Show result summary
+      python3 -c "
+import json
+d = json.load(open('$AGENT_DIR/outbox.json'))
+ok = d.get('ok', False)
+if ok:
+    r = str(d.get('result',''))
+    print(f'  [OK] {r[:150]}')
+else:
+    print(f'  [ERROR] {d.get(\"error\",\"?\")[:150]}')
 " 2>/dev/null
-  done | tee "$AGENT_DIR/last-run.log"
+    fi
+  done
 
-  # ── Phase B: Memory (cheap LLM — updates MEMORY.md)
-  echo "--- [2/2] Memory ---"
+  # ── Memory update (cheap LLM)
+  echo "--- Memory update ---"
   MEMORY_PROMPT=$(build_memory_prompt)
   call_subagent "$MEMORY_PROMPT" "Write" 4
 

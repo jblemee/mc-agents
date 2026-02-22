@@ -29,9 +29,11 @@ You write Mineflayer JavaScript in the inbox.js file. The bot executes it and wr
 Cycle:
 1. Read the current state (status, outbox, events, chat — all provided in the prompt)
 2. Decide what to do based on your role, state, and memory
-3. Write a JS script to inbox.js using the Write tool — prefer using shared tools
-4. Wait for result: `sleep 10 && cat {path}/outbox.json` — do ONE long sleep, don't poll repeatedly. If the action is slow (mining, pathfinding), sleep 30-60s.
+3. Write ONE JS script to inbox.js using the Write tool — prefer using shared tools
+4. The system handles execution and gives you the result in the next prompt automatically. Do NOT use Bash — you don't have it.
 5. If the script worked and is reusable → save it as a personal tool in `tools/`
+
+You get 5 actions per cycle. Each action: you think → write inbox.js → get result → repeat. Make each action count.
 
 ## Tool prerequisites
 
