@@ -19,6 +19,14 @@ module.exports = async function(bot, { radius = 20 } = {}) {
     .filter(Boolean)
     .reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc }, {})
 
+  // Trees nearby
+  const logNames = ['oak_log','birch_log','spruce_log','acacia_log','dark_oak_log','jungle_log','mangrove_log','cherry_log']
+  const logIds = logNames.map(n => mcData.blocksByName[n]?.id).filter(Boolean)
+  const trees = bot.findBlocks({ matching: logIds, maxDistance: radius, count: 10 })
+    .map(p => { const b = bot.blockAt(p); return b?.name })
+    .filter(Boolean)
+    .reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc }, {})
+
   const chestId = mcData.blocksByName['chest']?.id
   const chests = chestId ? bot.findBlocks({ matching: chestId, maxDistance: radius, count: 5 }) : []
 
@@ -32,6 +40,7 @@ module.exports = async function(bot, { radius = 20 } = {}) {
     food: bot.food,
     entities: entities.slice(0, 10),
     ores,
+    trees,
     chests: chests.length,
     water: water.length > 0,
     inventory: bot.inventory.items().map(i => `${i.name} x${i.count}`),

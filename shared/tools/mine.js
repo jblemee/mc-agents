@@ -30,28 +30,23 @@ module.exports = async function(bot, { block, count = 1, maxDistance = 64 } = {}
     const found = bot.findBlock({ matching: blockData.id, maxDistance })
     if (!found) return `Mined ${mined}/${count} ${block} — none found nearby${skipped ? ` (skipped ${skipped} unreachable)` : ''}`
 
-    // Use collectBlock which navigates + digs + picks up drops
+    // Navigate within dig range (4 blocks), dig, then pick up drops
     try {
-      await bot.collectBlock.collect(found)
-      mined++
+      await bot.pathfinder.goto(new GoalNear(found.position.x, found.position.y, found.position.z, 4))
     } catch (e) {
-      // collectBlock failed — try manual approach
       const dist = bot.entity.position.distanceTo(found.position)
-      if (dist > 5) {
-        skipped++
-        continue
-      }
-      // Close enough, try to dig manually
-      const b = bot.blockAt(found.position)
-      if (b && b.type === blockData.id && bot.canDigBlock(b)) {
-        await bot.dig(b)
-        mined++
-        // Walk to block position to pick up drops
-        await bot.pathfinder.goto(new GoalNear(found.position.x, found.position.y, found.position.z, 0)).catch(() => {})
-      } else {
-        skipped++
-      }
+      if (dist > 5) { skipped++; continue }
     }
+
+    const b = bot.blockAt(found.position)
+    if (!b || b.type !== blockData.id || !bot.canDigBlock(b)) { skipped++; continue }
+
+    await bot.dig(b)
+    mined++
+
+    // Walk to block position to pick up dropped items
+    await bot.pathfinder.goto(new GoalNear(found.position.x, found.position.y, found.position.z, 1)).catch(() => {})
+    await new Promise(r => setTimeout(r, 300))
   }
   return `Mined ${mined} ${block}${skipped ? ` (skipped ${skipped} unreachable)` : ''}`
 }
@@ -59,7 +54,7 @@ module.exports = async function(bot, { block, count = 1, maxDistance = 64 } = {}
 module.exports.meta = {
   name: "mine",
   description: "Mine N blocks of a given type, equipping the right tool automatically. NOTE: mine 'stone' to get cobblestone, mine 'oak_log'/'birch_log' for wood, mine 'iron_ore'/'coal_ore' for ores.",
-  params: { block: "string - block type name (use 'stone' not 'cobblestone', 'oak_log' not 'oak_wood')", count: "number (default 1)", maxDistance: "number (default 64)" },
+  params: { block: "string - block type name (use 'stone' not 'cobblestone'. For wood: 'oak_log', 'birch_log', 'acacia_log', 'spruce_log' etc. — use whatever tree type is nearby)", count: "number (default 1)", maxDistance: "number (default 64)" },
   requires: "Pickaxe for stone/ore, axe for wood, shovel for dirt/sand. Works without tool but slower.",
   provides: "Mined blocks in inventory (stone→cobblestone, iron_ore→raw_iron)"
 }

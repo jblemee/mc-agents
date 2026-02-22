@@ -18,9 +18,9 @@ module.exports = async function(bot, { item, count = 1 } = {}) {
     return `Crafted ${after - before} ${item}`
   }
 
-  // Search wider for existing crafting table (32 blocks)
+  // Search for existing crafting table (64 blocks)
   const tableId = mcData.blocksByName['crafting_table'].id
-  let table = bot.findBlock({ matching: tableId, maxDistance: 32 })
+  let table = bot.findBlock({ matching: tableId, maxDistance: 64 })
 
   // Place crafting table from inventory if none found nearby
   if (!table) {
