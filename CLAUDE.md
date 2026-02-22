@@ -68,3 +68,77 @@ Server connection is configured via `.env` (MC_HOST, MC_PORT, MC_VERSION). Micro
 ## Skills Directory
 
 `skills/*.md` files are Mineflayer API reference docs injected into the agent prompt. They cover basics, movement, mining, crafting, survival, and chat. Edit these to teach agents new capabilities.
+
+## Available Agents
+
+All agents are generic survival players with no assigned role. They decide their own strategy.
+
+| Agent | Default LLM |
+|-------|-------------|
+| alice | Sonnet |
+| bob | Sonnet |
+| charlie | GLM |
+| dave | Sonnet |
+| eve | GLM |
+| frank | GLM |
+| grace | GLM |
+| hank | GLM |
+| oscar | Opus |
+
+**Admin**: `plus200` (human player) has authority over all agents.
+
+## LLM Options
+
+```bash
+./run-agent.sh <name> 0 glm      # GLM 4.7 via BigModel (default, cheapest)
+./run-agent.sh <name> 0 sonnet   # Claude Sonnet 4.6
+./run-agent.sh <name> 0 claude   # Claude Sonnet 4.6 (alias)
+./run-agent.sh <name> 0 opus     # Claude Opus 4.6
+./run-agent.sh <name> 0 haiku    # Claude Haiku 4.5
+./run-agent.sh <name> 0 gemini   # Gemini
+```
+
+## Managing Agents
+
+```bash
+# Start multiple agents
+./run-agent.sh charlie 0 glm &
+./run-agent.sh grace 0 glm &
+
+# Stop all agents and bots
+pkill -f "run-agent.sh"; pkill -f "node bot.js"
+
+# Monitor logs with tmux
+tmux new-session -d -s mc "tail -f agents/charlie/last-run.log" && \
+  tmux split-window -t mc "tail -f agents/grace/last-run.log" && \
+  tmux select-layout -t mc tiled
+tmux attach -t mc
+
+# Quick status check
+python3 -c "
+import json
+for a in ['alice','bob','charlie','dave','eve','frank','grace','hank']:
+    try:
+        d=json.load(open(f'agents/{a}/outbox.json'))
+        pos=d.get('position',{})
+        print(f'{a}: HP:{d[\"health\"]} Pos:({pos.get(\"x\",0):.0f},{pos.get(\"y\",0):.0f},{pos.get(\"z\",0):.0f})')
+    except: print(f'{a}: offline')
+"
+```
+
+## Key Design Decisions
+
+- **Auto-defense reflex** in `bot.js`: instant fight-or-flight on `entityHurt` — does not wait for LLM. Fights if HP>6 and has weapon, flees otherwise. Only triggers on non-player attackers.
+- **Re-entrancy guard**: `executing` flag prevents concurrent eval() of two inbox.js scripts.
+- **Atomic inbox consume**: `renameSync(INBOX, LAST_ACTION)` before reading — avoids TOCTOU race.
+- **tools/ hot-reload**: `fs.watch` on tools dir, auto-created at startup if missing.
+- **Night rule** in system-prompt: agents return to base before timeOfDay ~11500, or bury themselves 3 blocks deep if too far.
+- **No animal killing**: absolute rule in system-prompt. Only plus200 may hunt.
+- **tools/ directory**: agents create reusable JS modules, auto-injected with bot as first arg.
+
+## Prompt Files
+
+- `system-prompt.md` — shared rules for all agents (survival, chain of command, night rule, no animal killing)
+- `agents/<name>/personality.md` — role-specific instructions with workflows and guides
+- `agents/<name>/MEMORY.md` — persistent per-cycle memory updated by a secondary LLM call
+- `skills/*.md` — Mineflayer API reference injected into every prompt

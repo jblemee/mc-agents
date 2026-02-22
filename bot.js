@@ -63,8 +63,9 @@ const LAST_ACTION = path.join(AGENT_DIR, 'last-action.js')
 const OUTBOX = path.join(AGENT_DIR, 'outbox.json')
 const STATUS = path.join(AGENT_DIR, 'status.json')
 const TOOLS_DIR = path.join(AGENT_DIR, 'tools')
+const SHARED_TOOLS_DIR = path.join(__dirname, 'shared', 'tools')
 
-// === TOOLS: load reusable scripts from tools/ ===
+// === TOOLS: load reusable scripts from shared/tools/ and agents/<name>/tools/ ===
 const tools = {}
 
 function loadTool(filePath) {
@@ -79,16 +80,22 @@ function loadTool(filePath) {
 }
 
 function loadAllTools() {
-  if (!fs.existsSync(TOOLS_DIR)) return
-  for (const file of fs.readdirSync(TOOLS_DIR)) {
-    if (file.endsWith('.js')) {
-      loadTool(path.join(TOOLS_DIR, file))
+  // Load shared tools first (agent tools can override)
+  if (fs.existsSync(SHARED_TOOLS_DIR)) {
+    for (const file of fs.readdirSync(SHARED_TOOLS_DIR)) {
+      if (file.endsWith('.js')) loadTool(path.join(SHARED_TOOLS_DIR, file))
     }
+  }
+  // Load agent-specific tools
+  if (!fs.existsSync(TOOLS_DIR)) fs.mkdirSync(TOOLS_DIR, { recursive: true })
+  for (const file of fs.readdirSync(TOOLS_DIR)) {
+    if (file.endsWith('.js')) loadTool(path.join(TOOLS_DIR, file))
   }
 }
 
 // Watch tools/ for changes (reload on save)
-if (fs.existsSync(TOOLS_DIR)) {
+if (!fs.existsSync(TOOLS_DIR)) fs.mkdirSync(TOOLS_DIR, { recursive: true })
+{
   fs.watch(TOOLS_DIR, (eventType, filename) => {
     if (filename && filename.endsWith('.js')) {
       const filePath = path.join(TOOLS_DIR, filename)
@@ -116,18 +123,26 @@ function writeStatus(state, extra = {}) {
   }, null, 2))
 }
 
+let executing = false
+
 bot.once('spawn', () => {
   console.log(`[${agentName}] Spawned at ${bot.entity.position}`)
   loadAllTools()
   writeStatus('idle')
 
   setInterval(async () => {
-    if (!fs.existsSync(INBOX)) return
+    if (executing) return
 
-    const code = fs.readFileSync(INBOX, 'utf8').trim()
+    // Atomic consume: rename first, then read (avoids TOCTOU race)
+    try {
+      fs.renameSync(INBOX, LAST_ACTION)
+    } catch (e) {
+      return // file doesn't exist or already consumed
+    }
+    const code = fs.readFileSync(LAST_ACTION, 'utf8').trim()
     if (!code) return
-    fs.renameSync(INBOX, LAST_ACTION)
 
+    executing = true
     console.log(`[${agentName}] Executing:\n${code.slice(0, 200)}...`)
     writeStatus('executing')
 
@@ -147,7 +162,7 @@ bot.once('spawn', () => {
         t[name] = (...args) => fn(bot, ...args)
       }
 
-      const TIMEOUT = 60_000 // 60s max per action
+      const TIMEOUT = 120_000 // 120s max per action
       const result = await Promise.race([
         eval(`(async () => {\nconst tools = t;\n${code}\n})()`),
         new Promise((_, reject) => setTimeout(() => {
@@ -159,19 +174,39 @@ bot.once('spawn', () => {
       // Small delay to let physics settle (movement, item pickup)
       await new Promise(r => setTimeout(r, 500))
       const invAfter = bot.inventory.items().map(i => `${i.name} x${i.count}`)
+
+      // Safely calculate distance
+      let distance = 'unknown'
+      try {
+        const d = posBefore.distanceTo(bot.entity.position)
+        distance = d > 1 ? `${d.toFixed(0)} blocks` : 'no'
+      } catch (de) {
+        console.error(`[${agentName}] Distance calc failed:`, de.message)
+      }
+
       const output = {
         ok: true,
-        result: result !== undefined ? String(result) : 'done',
-        position: bot.entity.position,
+        result: result !== undefined ? (typeof result === 'object' ? JSON.stringify(result) : String(result)) : 'done',
+        position: { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z },
         health: `${bot.health}/20${bot.health !== healthBefore ? ` (was ${healthBefore})` : ''}`,
         food: `${bot.food}/20${bot.food !== foodBefore ? ` (was ${foodBefore})` : ''}`,
-        moved: posBefore.distanceTo(bot.entity.position) > 1 ? `${posBefore.distanceTo(bot.entity.position).toFixed(0)} blocks` : 'no',
+        moved: distance,
         inventory: invAfter,
         inventoryChanged: JSON.stringify(invBefore) !== JSON.stringify(invAfter),
         time: bot.time.timeOfDay,
         nearbyEntities: Object.values(bot.entities)
-          .filter(e => e !== bot.entity && e.position.distanceTo(bot.entity.position) < 16)
-          .map(e => `${e.name || e.username || '?'} (${e.type}) ${e.position.distanceTo(bot.entity.position).toFixed(0)}m`)
+          .filter(e => e !== bot.entity)
+          .filter(e => {
+            try { return e.position.distanceTo(bot.entity.position) < 16 } catch { return false }
+          })
+          .map(e => {
+            try {
+              const d = e.position.distanceTo(bot.entity.position).toFixed(0)
+              return `${e.name || e.username || '?'} (${e.type}) ${d}m`
+            } catch {
+              return `${e.name || e.username || '?'} (${e.type}) unknown distance`
+            }
+          })
           .slice(0, 5),
       }
       fs.writeFileSync(OUTBOX, JSON.stringify(output, null, 2))
@@ -192,6 +227,8 @@ bot.once('spawn', () => {
       fs.writeFileSync(OUTBOX, JSON.stringify(output, null, 2))
       writeStatus('idle')
       console.error(`[${agentName}] ERROR:`, e.message)
+    } finally {
+      executing = false
     }
   }, 500)
 })
@@ -207,13 +244,6 @@ function pushEvent(event) {
   fs.writeFileSync(EVENTS_FILE, JSON.stringify(events, null, 2))
 }
 
-const URGENT_FILE = path.join(AGENT_DIR, 'urgent')
-
-function triggerUrgent(reason) {
-  fs.writeFileSync(URGENT_FILE, reason)
-  console.log(`[${agentName}] URGENT: ${reason}`)
-}
-
 bot.on('chat', (username, message) => {
   if (username === bot.username) return
   const chat = fs.existsSync(CHAT_FILE) ? JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8')) : []
@@ -221,23 +251,179 @@ bot.on('chat', (username, message) => {
   while (chat.length > 20) chat.shift()
   fs.writeFileSync(CHAT_FILE, JSON.stringify(chat, null, 2))
   pushEvent({ type: 'chat', from: username, message })
-  triggerUrgent(`Chat from ${username}: ${message}`)
 })
+
+// === AUTO-DEFENSE REFLEX: instant fight-or-flight ===
+let reflexActive = false
+
+function getBestWeapon() {
+  const dominated = ['diamond_sword', 'diamond_axe', 'iron_sword', 'iron_axe', 'stone_sword', 'stone_axe', 'wooden_sword', 'wooden_axe']
+  for (const name of dominated) {
+    const item = bot.inventory.items().find(i => i.name === name)
+    if (item) return item
+  }
+  return null
+}
+
+async function autoDefense(attacker) {
+  if (reflexActive) return
+  reflexActive = true
+  try {
+    const weapon = getBestWeapon()
+    if (bot.health > 6 && weapon && attacker) {
+      // Fight: equip weapon and attack
+      await bot.equip(weapon, 'hand')
+      bot.pvp.attack(attacker)
+      console.log(`[${agentName}] REFLEX: Fighting ${attacker.name || attacker.username} with ${weapon.name}`)
+      pushEvent({ type: 'reflex', action: 'fight', target: attacker.name || attacker.username, weapon: weapon.name })
+    } else if (attacker) {
+      // Flight: sprint away from attacker
+      bot.pvp.stop()
+      const dir = bot.entity.position.minus(attacker.position).normalize()
+      const fleeTarget = bot.entity.position.plus(dir.scaled(20))
+      bot.pathfinder.setGoal(new pathfinder.goals.GoalNear(fleeTarget.x, fleeTarget.y, fleeTarget.z, 3))
+      bot.setControlState('sprint', true)
+      console.log(`[${agentName}] REFLEX: Fleeing from ${attacker.name || attacker.username} (HP: ${bot.health})`)
+      pushEvent({ type: 'reflex', action: 'flee', from: attacker.name || attacker.username, health: bot.health })
+      setTimeout(() => bot.setControlState('sprint', false), 5000)
+    }
+  } catch (e) {
+    console.error(`[${agentName}] Reflex error:`, e.message)
+  }
+  // Cooldown: don't re-trigger for 2s
+  setTimeout(() => { reflexActive = false }, 2000)
+}
+
+// Hostile mob types that should trigger auto-defense
+const HOSTILE_MOBS = new Set([
+  'zombie', 'skeleton', 'creeper', 'spider', 'cave_spider', 'enderman',
+  'witch', 'pillager', 'vindicator', 'phantom', 'drowned', 'husk', 'stray',
+  'slime', 'magma_cube', 'blaze', 'ghast', 'ravager', 'evoker', 'vex',
+  'warden', 'elder_guardian', 'guardian', 'silverfish', 'zombie_villager',
+])
+
+// Proactive proximity check: attack before getting hit
+setInterval(() => {
+  if (reflexActive) return
+  const nearby = Object.values(bot.entities).find(e => {
+    if (!HOSTILE_MOBS.has(e.name)) return false
+    try { return e.position.distanceTo(bot.entity.position) < 5 } catch { return false }
+  })
+  if (nearby) autoDefense(nearby)
+}, 500)
+
+// === AUTO-EAT REFLEX: eat when hungry, non-blocking ===
+let eating = false
+const FOOD_PRIORITY = [
+  'cooked_beef','cooked_porkchop','cooked_mutton','cooked_chicken',
+  'cooked_salmon','cooked_cod','bread','baked_potato',
+  'carrot','apple','melon_slice','potato','beetroot',
+  'cookie','pumpkin_pie','golden_carrot','golden_apple',
+]
+
+setInterval(async () => {
+  if (eating || executing || reflexActive) return
+  if (bot.food >= 14) return
+
+  const foodItem = FOOD_PRIORITY
+    .map(name => bot.inventory.items().find(i => i.name === name))
+    .find(Boolean)
+  if (!foodItem) return
+
+  eating = true
+  try {
+    await bot.equip(foodItem, 'hand')
+    bot.activateItem()
+    await new Promise(r => setTimeout(r, 1600))
+    bot.deactivateItem()
+    console.log(`[${agentName}] [AUTO-EAT] Ate ${foodItem.name}, food: ${bot.food}/20`)
+    pushEvent({ type: 'auto-eat', item: foodItem.name, food: bot.food })
+  } catch (e) {
+    console.error(`[${agentName}] Auto-eat error:`, e.message)
+  } finally {
+    eating = false
+  }
+}, 5000)
+
+// === AUTO-SHELTER REFLEX: emergency shelter when in danger at night ===
+let sheltering = false
+
+setInterval(async () => {
+  if (sheltering || executing || reflexActive || eating) return
+
+  const time = bot.time?.timeOfDay
+  const isNight = time > 13000 && time < 23000
+  if (!isNight) return
+  if (bot.health >= 10) return
+
+  // Check for nearby hostile mob
+  const hasHostileNearby = Object.values(bot.entities).some(e => {
+    if (!HOSTILE_MOBS.has(e.name)) return false
+    try { return e.position.distanceTo(bot.entity.position) < 10 } catch { return false }
+  })
+  if (!hasHostileNearby) return
+
+  // Check no weapon
+  const weapon = getBestWeapon()
+  if (weapon) return  // has weapon, auto-defense will handle it
+
+  sheltering = true
+  try {
+    console.log(`[${agentName}] [AUTO-SHELTER] Emergency shelter — night + hostile + low HP + no weapon`)
+    pushEvent({ type: 'auto-shelter', health: bot.health, time })
+    const Vec3 = require('vec3')
+    const start = bot.entity.position.floored()
+
+    // Dig down 3 blocks
+    for (let i = 1; i <= 4; i++) {
+      const b = bot.blockAt(start.offset(0, -i, 0))
+      if (b && b.name !== 'air' && bot.canDigBlock(b)) {
+        await bot.dig(b).catch(() => {})
+        await new Promise(r => setTimeout(r, 200))
+      }
+    }
+
+    // Seal the top
+    const sealItem = bot.inventory.items().find(i =>
+      ['dirt','cobblestone','stone','gravel','sand','oak_planks','spruce_planks','birch_planks'].includes(i.name)
+    )
+    if (sealItem) {
+      await bot.equip(sealItem, 'hand')
+      for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const wallRef = bot.blockAt(new (require('vec3'))(start.x + dx, start.y, start.z + dz))
+        if (wallRef && wallRef.name !== 'air' && wallRef.name !== 'water') {
+          try {
+            await bot.placeBlock(wallRef, new (require('vec3'))(-dx, 0, -dz))
+            console.log(`[${agentName}] [AUTO-SHELTER] Sealed shelter`)
+            break
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[${agentName}] Auto-shelter error:`, e.message)
+  } finally {
+    sheltering = false
+  }
+}, 10000)
 
 bot.on('entityHurt', (entity) => {
   if (entity !== bot.entity) return
   const attacker = Object.values(bot.entities).find(e =>
-    e !== bot.entity && e.position.distanceTo(bot.entity.position) < 6
+    e !== bot.entity && e.type !== 'object' && e.position.distanceTo(bot.entity.position) < 6
   )
   const by = attacker?.name || attacker?.username || 'unknown'
   pushEvent({ type: 'hurt', by, health: bot.health })
-  triggerUrgent(`Attacked by ${by}! HP: ${bot.health}`)
+  if (attacker && attacker.type !== 'player') {
+    autoDefense(attacker)
+  }
 })
 
 bot.on('death', () => {
   console.log(`[${agentName}] Died! Respawning...`)
   writeStatus('dead')
-  bot.emit('respawn')
+  pushEvent({ type: 'death' })
+  setTimeout(() => bot.respawn(), 1000)
 })
 
 bot.on('error', (err) => {

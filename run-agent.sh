@@ -1,167 +1,220 @@
 #!/bin/bash
 # Usage: ./run-agent.sh bob [max_loops] [llm]
-# llm: glm (default), claude, gemini
+# llm: glm (default), claude, sonnet, haiku, opus, gemini
 unset CLAUDECODE
 
-# Load .env (for GEMINI_API_KEY, etc.)
+# Load .env
 SCRIPT_DIR_EARLY="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR_EARLY/.env" ]; then
   export $(grep -v '^#' "$SCRIPT_DIR_EARLY/.env" | xargs)
 fi
 
 AGENT_NAME="${1:-bob}"
-MAX_LOOPS="${2:-0}"  # 0 = infinite
-LLM="${3:-glm}"      # glm, claude, sonnet, haiku, gemini
+MAX_LOOPS="${2:-0}"
+LLM="${3:-glm}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
-PAUSE=10  # seconds between cycles
+PAUSE=10
 
 # GLM config
 GLM_CONFIG="$HOME/.glm/config.json"
+GLM_TOKEN=""
+GLM_MODEL="glm-4.7"
 if [ "$LLM" = "glm" ]; then
   if [ -f "$GLM_CONFIG" ]; then
     GLM_TOKEN=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG'))['anthropic_auth_token'])" 2>/dev/null)
     GLM_MODEL=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG')).get('default_model','glm-4.7'))" 2>/dev/null)
   else
-    echo "ERROR: GLM config not found at $GLM_CONFIG. Run 'glm token set' first."
+    echo "ERROR: GLM config not found at $GLM_CONFIG"
     exit 1
   fi
 fi
 
-# Build the prompt and write to a temp file
-build_prompt() {
-  local file="$AGENT_DIR/.prompt.md"
+# Claude model for actor phase
+CLAUDE_MODEL="sonnet"
+[ "$LLM" = "haiku" ] && CLAUDE_MODEL="haiku"
+[ "$LLM" = "opus"  ] && CLAUDE_MODEL="opus"
 
+ACTOR_TOOLS="Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),Bash(grep:*),Bash(cp:*),Bash(wc:*),Bash(node:*),Bash(python3:*),WebSearch,WebFetch"
+
+# ── Helper: call LLM as a sub-agent (memory update)
+# Uses haiku for Claude backends, same model for GLM
+# Args: prompt_file allowed_tools max_turns
+call_subagent() {
+  local prompt_file="$1"
+  local allowed_tools="${2:-Write}"
+  local max_turns="${3:-4}"
+  local timeout_sec=90  # kill subagent if it hangs
+
+  if [ "$LLM" = "glm" ]; then
+    timeout "$timeout_sec" \
+    env ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
+        ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
+    claude -p "$(cat "$prompt_file")" \
+      --model "$GLM_MODEL" \
+      --allowedTools "$allowed_tools" \
+      --dangerously-skip-permissions \
+      --max-turns "$max_turns" \
+      --output-format text \
+      2>&1 | tail -1
+  elif [ "$LLM" = "gemini" ]; then
+    timeout "$timeout_sec" \
+    gemini -p "$(cat "$prompt_file")" \
+      --model gemini-3-flash-preview \
+      --yolo \
+      --output-format text \
+      2>&1 | tail -1
+  else
+    timeout "$timeout_sec" \
+    claude -p "$(cat "$prompt_file")" \
+      --model haiku \
+      --allowedTools "$allowed_tools" \
+      --permission-mode acceptEdits \
+      --max-turns "$max_turns" \
+      --output-format text \
+      2>&1 | tail -1
+  fi
+}
+
+# ── Helper: list personal tools for prompts
+list_personal_tools() {
+  if [ -d "$AGENT_DIR/tools" ] && ls "$AGENT_DIR/tools"/*.js >/dev/null 2>&1; then
+    for tool_file in "$AGENT_DIR/tools"/*.js; do
+      local name desc
+      name=$(basename "$tool_file" .js)
+      desc=$(head -5 "$tool_file" | grep -m1 '^\s*//' | sed 's|^\s*// *||')
+      [ -n "$desc" ] && echo "- **$name**: $desc" || echo "- **$name**"
+    done
+  fi
+}
+
+# ── Generate tool catalog (uses .meta from shared tools)
+TOOL_CATALOG=""
+generate_tool_catalog() {
+  TOOL_CATALOG=$(node "$SCRIPT_DIR/shared/tool-catalog.js" 2>/dev/null)
+  if [ -z "$TOOL_CATALOG" ]; then
+    TOOL_CATALOG="(tool catalog generation failed)"
+  fi
+}
+
+# ── Phase A: ACTOR prompt (single prompt with inline state)
+build_actor_prompt() {
+  local file="$AGENT_DIR/.prompt.md"
   {
     cat "$SCRIPT_DIR/system-prompt.md"
     echo ""
 
-    # Agent personality
-    if [ -f "$AGENT_DIR/personality.md" ]; then
-      echo "## Your personality"
-      cat "$AGENT_DIR/personality.md"
+    # Role
+    echo "## Your role"
+    [ -f "$AGENT_DIR/personality.md" ] && cat "$AGENT_DIR/personality.md" || echo "(no personality)"
+    echo ""
+
+    # Current state (inline — no separate observer)
+    echo "## Current state"
+    echo ""
+    echo "### status.json"
+    [ -f "$AGENT_DIR/status.json" ] && cat "$AGENT_DIR/status.json" || echo "(none)"
+    echo ""
+    echo "### Last action result (outbox.json)"
+    [ -f "$AGENT_DIR/outbox.json" ] && cat "$AGENT_DIR/outbox.json" || echo "(none)"
+    echo ""
+    echo "### Recent events"
+    ([ -f "$AGENT_DIR/events.json" ] && [ -s "$AGENT_DIR/events.json" ] && cat "$AGENT_DIR/events.json") || echo "[]"
+    echo ""
+    echo "### Chat"
+    ([ -f "$AGENT_DIR/chat.json" ] && [ -s "$AGENT_DIR/chat.json" ] && cat "$AGENT_DIR/chat.json") || echo "[]"
+    echo ""
+
+    # Tool catalog (generated from .meta)
+    echo "$TOOL_CATALOG"
+    echo ""
+
+    if [ -d "$AGENT_DIR/tools" ] && ls "$AGENT_DIR/tools"/*.js >/dev/null 2>&1; then
+      echo "## Your personal tools"
+      list_personal_tools
       echo ""
     fi
-
-    # Skills
-    echo "## Available skills"
-    for skill in "$SCRIPT_DIR"/skills/*.md; do
-      [ -f "$skill" ] && cat "$skill"
-      echo ""
-    done
 
     # Memory
-    if [ -f "$AGENT_DIR/MEMORY.md" ]; then
-      echo "## Your memory (from previous sessions)"
-      cat "$AGENT_DIR/MEMORY.md"
-      echo ""
-    fi
+    echo "## Your memory"
+    [ -f "$AGENT_DIR/MEMORY.md" ] && cat "$AGENT_DIR/MEMORY.md" || echo "(empty)"
+    echo ""
 
-    # Current status
-    if [ -f "$AGENT_DIR/status.json" ]; then
-      echo "## Your current state"
-      echo '```json'
-      cat "$AGENT_DIR/status.json"
-      echo '```'
-      echo ""
-    fi
-
-    # Last action result
-    if [ -f "$AGENT_DIR/outbox.json" ]; then
-      echo "## Result of your last action"
-      echo '```json'
-      cat "$AGENT_DIR/outbox.json"
-      echo '```'
-      echo ""
-    fi
-
-    # Events (attacks, chat, etc.)
-    if [ -f "$AGENT_DIR/events.json" ] && [ -s "$AGENT_DIR/events.json" ]; then
-      echo "## Recent events"
-      echo '```json'
-      cat "$AGENT_DIR/events.json"
-      echo '```'
-      echo ""
-    fi
-
-    # Chat messages
-    if [ -f "$AGENT_DIR/chat.json" ] && [ -s "$AGENT_DIR/chat.json" ]; then
-      echo "## Chat messages received"
-      echo '```json'
-      cat "$AGENT_DIR/chat.json"
-      echo '```'
-      echo "Reply to messages with bot.chat('your message'). Be social and friendly!"
-      echo ""
-    fi
-
-    # Available tools
-    if [ -d "$AGENT_DIR/tools" ] && ls "$AGENT_DIR/tools"/*.js >/dev/null 2>&1; then
-      echo "## Available tools"
-      echo "You can call these tools in inbox.js with \`await tools.name({ ...args })\`"
-      echo ""
-      for tool_file in "$AGENT_DIR/tools"/*.js; do
-        tool_name=$(basename "$tool_file" .js)
-        # Extract first comment line as description
-        tool_desc=$(head -5 "$tool_file" | grep -m1 '^\s*//' | sed 's|^\s*// *||')
-        if [ -n "$tool_desc" ]; then
-          echo "- **$tool_name** : $tool_desc"
-        else
-          echo "- **$tool_name**"
-        fi
-      done
-      echo ""
-    fi
-
-    # Paths
     echo "## Paths"
-    echo "- Write your JS actions in: $AGENT_DIR/inbox.js"
-    echo "- Read results from: $AGENT_DIR/outbox.json"
-    echo "- Update your memory in: $AGENT_DIR/MEMORY.md"
-    echo "- Create reusable tools in: $AGENT_DIR/tools/"
-
+    echo "- Actions: $AGENT_DIR/inbox.js"
+    echo "- Results: $AGENT_DIR/outbox.json"
+    echo "- Memory:  $AGENT_DIR/MEMORY.md"
+    echo "- New tools: $AGENT_DIR/tools/<name>.js"
   } > "$file"
-
   echo "$file"
 }
 
-# Start bot process with auto-restart
+# ── Phase B: MEMORY prompt
+build_memory_prompt() {
+  local file="$AGENT_DIR/.memory-prompt.txt"
+  {
+    echo "Update the MEMORY.md for Minecraft bot '$AGENT_NAME' based on this cycle."
+    echo ""
+    echo "## Cycle log"
+    cat "$AGENT_DIR/last-run.log" 2>/dev/null
+    echo ""
+    echo "## Final state"
+    cat "$AGENT_DIR/status.json" 2>/dev/null
+    echo ""
+    echo "## Last result"
+    cat "$AGENT_DIR/outbox.json" 2>/dev/null
+    echo ""
+    echo "## Current memory"
+    cat "$AGENT_DIR/MEMORY.md" 2>/dev/null
+    echo ""
+    echo "Write updated memory to: $AGENT_DIR/MEMORY.md"
+    echo "Include: position, inventory, base location (if known), lessons learned, plan for next cycle."
+    echo "Be concise. Max 100 lines."
+  } > "$file"
+  echo "$file"
+}
+
+# ── Start bot process with auto-restart
 BOT_PID=""
 start_bot() {
-  # Check if bot is still alive
   if [ -n "$BOT_PID" ] && kill -0 "$BOT_PID" 2>/dev/null; then
-    # Also check status.json isn't disconnected
-    local state=$(python3 -c "import json; print(json.load(open('$AGENT_DIR/status.json')).get('state',''))" 2>/dev/null)
+    local state
+    state=$(python3 -c "import json; print(json.load(open('$AGENT_DIR/status.json')).get('state',''))" 2>/dev/null)
     if [ "$state" != "disconnected" ] && [ "$state" != "error" ]; then
-      return  # bot is running fine
+      return
     fi
-    echo ">>> Bot state is '$state', killing and restarting..."
+    echo ">>> Bot state is '$state', restarting..."
     kill "$BOT_PID" 2>/dev/null
     wait "$BOT_PID" 2>/dev/null
   fi
-  echo ">>> Starting bot process..."
+  echo ">>> Starting bot..."
   node "$SCRIPT_DIR/bot.js" "$AGENT_NAME" &
   BOT_PID=$!
   sleep 5
   echo ">>> Bot started (PID: $BOT_PID)"
 }
-# Cleanup on exit
 trap 'kill $BOT_PID 2>/dev/null' EXIT
 
 echo "=== Agent $AGENT_NAME starting (LLM: $LLM) ==="
 echo "Agent dir: $AGENT_DIR"
 
+# Generate tool catalog once at startup
+generate_tool_catalog
+
 loop=0
 while true; do
   loop=$((loop + 1))
   echo ""
-  echo "--- Cycle $loop ($(date '+%H:%M:%S')) ---"
+  echo "━━━ Cycle $loop ($(date '+%H:%M:%S')) ━━━"
 
-  start_bot  # ensure bot is running (auto-restart if crashed)
-  PROMPT_FILE=$(build_prompt)
+  start_bot
 
-  # Launch LLM agent
+  # ── Phase A: Actor (main LLM — reads state, plans, writes JS)
+  echo "--- [1/2] Actor ---"
+  ACTOR_PROMPT=$(build_actor_prompt)
+
   if [ "$LLM" = "gemini" ]; then
-    gemini -p "$(cat "$PROMPT_FILE")" \
+    gemini -p "$(cat "$ACTOR_PROMPT")" \
       --model gemini-3-pro-preview \
       --yolo \
       --output-format stream-json \
@@ -169,52 +222,29 @@ while true; do
   elif [ "$LLM" = "glm" ]; then
     ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
     ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
-    claude -p "$(cat "$PROMPT_FILE")" \
+    claude -p "$(cat "$ACTOR_PROMPT")" \
       --model "$GLM_MODEL" \
-      --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
+      --allowedTools "$ACTOR_TOOLS" \
       --dangerously-skip-permissions \
-      --max-turns 20 \
+      --max-turns 12 \
       --output-format stream-json \
       2>&1
   else
-    # claude, sonnet, haiku all use Claude Code with different models
-    CLAUDE_MODEL="sonnet"
-    [ "$LLM" = "haiku" ] && CLAUDE_MODEL="haiku"
-    [ "$LLM" = "opus" ] && CLAUDE_MODEL="opus"
-    claude -p "$(cat "$PROMPT_FILE")" \
+    claude -p "$(cat "$ACTOR_PROMPT")" \
       --model "$CLAUDE_MODEL" \
-      --allowedTools "Read,Write,Bash(sleep:*),Bash(cat:*),Bash(ls:*),Bash(jq:*),WebSearch,WebFetch" \
+      --allowedTools "$ACTOR_TOOLS" \
       --dangerously-skip-permissions \
-      --max-turns 20 \
+      --max-turns 12 \
       --output-format stream-json \
       2>&1
   fi | while IFS= read -r line; do
-      echo "$line" | python3 -c "
+    echo "$line" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
 except: sys.exit()
 t = d.get('type','')
-# Gemini format
-if t == 'message' and d.get('role') == 'assistant':
-    txt = d.get('content','')
-    if txt and not d.get('delta'): print('[THINK]', txt[:200])
-    elif txt and d.get('delta'): print(txt, end='')
-elif t == 'tool_use':
-    name = d.get('tool_name','')
-    params = d.get('parameters',{})
-    if name in ('write_file','Write','WriteFile'):
-        print(f'[WRITE] {params.get(\"file_path\",\"\")}')
-    elif name in ('run_shell_command','Bash','Shell'):
-        print(f'[BASH] {params.get(\"command\",\"\")[:120]}')
-    elif name in ('read_file','Read','ReadFile'):
-        print(f'[READ] {params.get(\"file_path\",\"\")}')
-    else:
-        print(f'[TOOL] {name}')
-elif t == 'tool_result' and d.get('status') == 'error':
-    print(f'[ERROR] {d.get(\"output\",\"\")[:120]}')
-# Claude format
-elif t == 'assistant':
+if t == 'assistant':
     for block in d.get('message',{}).get('content',[]):
         if block.get('type') == 'text' and block.get('text','').strip():
             print('[THINK]', block['text'][:200])
@@ -224,78 +254,26 @@ elif t == 'assistant':
             if name in ('Write','WriteFile'): print(f'[WRITE] {inp.get(\"file_path\",\"\")}')
             elif name in ('Bash','Shell'): print(f'[BASH] {inp.get(\"command\",\"\")[:120]}')
             elif name in ('Read','ReadFile'): print(f'[READ] {inp.get(\"file_path\",\"\")}')
+elif t == 'tool_result' and d.get('status') == 'error':
+    print(f'[ERROR] {d.get(\"output\",\"\")[:120]}')
 " 2>/dev/null
-    done | tee "$AGENT_DIR/last-run.log"
+  done | tee "$AGENT_DIR/last-run.log"
 
-  # Force memory update: sub-agent analyzes the run log and updates memory
-  echo "--- Updating memory ---"
-  MEMORY_FILE="$AGENT_DIR/.memory-prompt.txt"
-  {
-    echo "Analyze this Minecraft agent log and update its memory."
-    echo ""
-    echo "=== CYCLE LOG ==="
-    cat "$AGENT_DIR/last-run.log" 2>/dev/null
-    echo ""
-    echo "=== CURRENT STATE ==="
-    cat "$AGENT_DIR/status.json" 2>/dev/null
-    echo ""
-    echo "=== LAST RESULT ==="
-    cat "$AGENT_DIR/outbox.json" 2>/dev/null
-    echo ""
-    echo "=== CURRENT MEMORY ==="
-    cat "$AGENT_DIR/MEMORY.md" 2>/dev/null
-    echo ""
-    echo "=== INSTRUCTIONS ==="
-    echo "Write an updated MEMORY.md to the file: $AGENT_DIR/MEMORY.md"
-    echo "Include: position, inventory, health, lessons learned (errors, protected zones, etc.), plan for next steps."
-    echo "Be concise but thorough. The agent has ONLY this file as memory between sessions."
-  } > "$MEMORY_FILE"
+  # ── Phase B: Memory (cheap LLM — updates MEMORY.md)
+  echo "--- [2/2] Memory ---"
+  MEMORY_PROMPT=$(build_memory_prompt)
+  call_subagent "$MEMORY_PROMPT" "Write" 4
 
-  if [ "$LLM" = "gemini" ]; then
-    gemini -p "$(cat "$MEMORY_FILE")" \
-      --model gemini-3-flash-preview \
-      --yolo \
-      --output-format text \
-      2>&1 | tail -1
-  elif [ "$LLM" = "glm" ]; then
-    ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
-    ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
-    claude -p "$(cat "$MEMORY_FILE")" \
-      --model "$GLM_MODEL" \
-      --allowedTools "Write" \
-      --dangerously-skip-permissions \
-      --max-turns 4 \
-      --output-format text \
-      2>&1 | tail -1
-  else
-    claude -p "$(cat "$MEMORY_FILE")" \
-      --model haiku \
-      --allowedTools "Write" \
-      --permission-mode acceptEdits \
-      --max-turns 4 \
-      --output-format text \
-      2>&1 | tail -1
-  fi
-
-  # Clear urgent flag and old chat/events after each cycle
-  rm -f "$AGENT_DIR/urgent"
+  # Cleanup
   echo "[]" > "$AGENT_DIR/chat.json"
   echo "[]" > "$AGENT_DIR/events.json"
 
-  echo "--- Cycle $loop done, sleeping ${PAUSE}s (or until urgent event) ---"
+  echo "--- Cycle $loop done, sleeping ${PAUSE}s ---"
 
   if [ "$MAX_LOOPS" -gt 0 ] && [ "$loop" -ge "$MAX_LOOPS" ]; then
     echo "=== Max loops reached, stopping ==="
     break
   fi
 
-  # Sleep but wake up early if urgent event arrives
-  for i in $(seq 1 "$PAUSE"); do
-    if [ -f "$AGENT_DIR/urgent" ]; then
-      echo ">>> URGENT: $(cat "$AGENT_DIR/urgent") — starting cycle now!"
-      rm -f "$AGENT_DIR/urgent"
-      break
-    fi
-    sleep 1
-  done
+  sleep "$PAUSE"
 done
