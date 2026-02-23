@@ -6,11 +6,12 @@ module.exports = async function(bot, { radius = 16 } = {}) {
   const moves = new Movements(bot)
   bot.pathfinder.setMovements(moves)
 
-  const items = Object.values(bot.entities).filter(e =>
-    e.type === 'object' &&
-    e.objectType === 'Item' &&
-    e.position.distanceTo(bot.entity.position) <= radius
-  )
+  const items = Object.values(bot.entities).filter(e => {
+    try {
+      return (e.name === 'item' || (e.type === 'object' && e.objectType === 'Item')) &&
+        e.position.distanceTo(bot.entity.position) <= radius
+    } catch { return false }
+  })
 
   if (!items.length) return `No dropped items within ${radius} blocks`
 

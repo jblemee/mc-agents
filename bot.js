@@ -244,13 +244,23 @@ function pushEvent(event) {
   fs.writeFileSync(EVENTS_FILE, JSON.stringify(events, null, 2))
 }
 
-bot.on('chat', (username, message) => {
-  if (username === bot.username) return
+function recordChat(from, message, type = 'chat') {
   const chat = fs.existsSync(CHAT_FILE) ? JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8')) : []
-  chat.push({ from: username, message, time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })
+  const prefix = type === 'whisper' ? '[whisper] ' : ''
+  chat.push({ from, message: prefix + message, time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })
   while (chat.length > 20) chat.shift()
   fs.writeFileSync(CHAT_FILE, JSON.stringify(chat, null, 2))
-  pushEvent({ type: 'chat', from: username, message })
+  pushEvent({ type, from, message })
+}
+
+bot.on('chat', (username, message) => {
+  if (username === bot.username) return
+  recordChat(username, message, 'chat')
+})
+
+bot.on('whisper', (username, message) => {
+  if (username === bot.username) return
+  recordChat(username, message, 'whisper')
 })
 
 // === AUTO-DEFENSE REFLEX: instant fight-or-flight ===
@@ -267,6 +277,7 @@ function getBestWeapon() {
 
 async function autoDefense(attacker) {
   if (reflexActive) return
+  if (!attacker || attacker.type !== 'mob') return  // Only fight mobs, never items/players/other
   reflexActive = true
   try {
     const weapon = getBestWeapon()
@@ -314,6 +325,8 @@ setInterval(() => {
 
 // === AUTO-EAT REFLEX: eat when hungry, non-blocking ===
 let eating = false
+let lastAteAt = 0
+const EAT_COOLDOWN = 10000  // 10s cooldown — let food/saturation regenerate
 const FOOD_PRIORITY = [
   'cooked_beef','cooked_porkchop','cooked_mutton','cooked_chicken',
   'cooked_salmon','cooked_cod','bread','baked_potato',
@@ -324,6 +337,7 @@ const FOOD_PRIORITY = [
 setInterval(async () => {
   if (eating || executing || reflexActive) return
   if (bot.food >= 14) return
+  if (Date.now() - lastAteAt < EAT_COOLDOWN) return  // wait for food to regenerate
 
   const foodItem = FOOD_PRIORITY
     .map(name => bot.inventory.items().find(i => i.name === name))
@@ -333,9 +347,8 @@ setInterval(async () => {
   eating = true
   try {
     await bot.equip(foodItem, 'hand')
-    bot.activateItem()
-    await new Promise(r => setTimeout(r, 1600))
-    bot.deactivateItem()
+    await bot.consume()
+    lastAteAt = Date.now()
     console.log(`[${agentName}] [AUTO-EAT] Ate ${foodItem.name}, food: ${bot.food}/20`)
     pushEvent({ type: 'auto-eat', item: foodItem.name, food: bot.food })
   } catch (e) {
@@ -410,7 +423,7 @@ setInterval(async () => {
 bot.on('entityHurt', (entity) => {
   if (entity !== bot.entity) return
   const attacker = Object.values(bot.entities).find(e =>
-    e !== bot.entity && e.type !== 'object' && e.position.distanceTo(bot.entity.position) < 6
+    e !== bot.entity && e.type === 'mob' && e.position.distanceTo(bot.entity.position) < 6
   )
   const by = attacker?.name || attacker?.username || 'unknown'
   pushEvent({ type: 'hurt', by, health: bot.health })

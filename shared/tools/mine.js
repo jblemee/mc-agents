@@ -26,20 +26,29 @@ module.exports = async function(bot, { block, count = 1, maxDistance = 64 } = {}
 
   let mined = 0
   let skipped = 0
+  const skipPositions = []  // track blocks we already failed to reach
   for (let i = 0; i < count; i++) {
-    const found = bot.findBlock({ matching: blockData.id, maxDistance })
+    const found = bot.findBlock({
+      matching: blockData.id,
+      maxDistance,
+      useExtraInfo: (b) => !skipPositions.some(p => p.equals(b.position))
+    })
     if (!found) return `Mined ${mined}/${count} ${block} — none found nearby${skipped ? ` (skipped ${skipped} unreachable)` : ''}`
 
-    // Navigate within dig range (4 blocks), dig, then pick up drops
+    // Navigate close enough to dig (max reach ~4.5 blocks)
     try {
-      await bot.pathfinder.goto(new GoalNear(found.position.x, found.position.y, found.position.z, 4))
+      await bot.pathfinder.goto(new GoalNear(found.position.x, found.position.y, found.position.z, 3))
     } catch (e) {
       const dist = bot.entity.position.distanceTo(found.position)
-      if (dist > 5) { skipped++; continue }
+      if (dist > 5) { skipPositions.push(found.position); skipped++; continue }
     }
 
     const b = bot.blockAt(found.position)
-    if (!b || b.type !== blockData.id || !bot.canDigBlock(b)) { skipped++; continue }
+    if (!b || b.type !== blockData.id || !bot.canDigBlock(b)) { skipPositions.push(found.position); skipped++; continue }
+
+    // Verify actual distance before digging (accounts for Y difference on trees)
+    const digDist = bot.entity.position.distanceTo(found.position)
+    if (digDist > 5) { skipPositions.push(found.position); skipped++; continue }
 
     await bot.dig(b)
     mined++

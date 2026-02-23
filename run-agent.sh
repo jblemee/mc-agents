@@ -1,6 +1,7 @@
 #!/bin/bash
-# Usage: ./run-agent.sh bob [max_loops] [llm]
-# llm: glm (default), claude, sonnet, haiku, opus, gemini
+# Usage: ./run-agent.sh bob [max_loops] [llm] [effort]
+# llm: glm (default), glm5, claude, sonnet, haiku, opus, gemini
+# effort: low, medium, high (default: none — only applies to Claude models)
 unset CLAUDECODE
 
 # Load .env
@@ -12,6 +13,7 @@ fi
 AGENT_NAME="${1:-bob}"
 MAX_LOOPS="${2:-0}"
 LLM="${3:-glm}"
+EFFORT="${4:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$SCRIPT_DIR/agents/$AGENT_NAME"
 PAUSE=5
@@ -21,10 +23,16 @@ MAX_ACTIONS=5  # actions per cycle before memory update
 GLM_CONFIG="$HOME/.glm/config.json"
 GLM_TOKEN=""
 GLM_MODEL="glm-4.7"
-if [ "$LLM" = "glm" ]; then
+if [ "$LLM" = "glm5" ]; then
+  GLM_MODEL="glm-5"
+fi
+if [ "$LLM" = "glm" ] || [ "$LLM" = "glm5" ]; then
   if [ -f "$GLM_CONFIG" ]; then
     GLM_TOKEN=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG'))['anthropic_auth_token'])" 2>/dev/null)
-    GLM_MODEL=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG')).get('default_model','glm-4.7'))" 2>/dev/null)
+    # Only override model from config for plain glm, not glm5
+    if [ "$LLM" = "glm" ]; then
+      GLM_MODEL=$(python3 -c "import json; print(json.load(open('$GLM_CONFIG')).get('default_model','glm-4.7'))" 2>/dev/null)
+    fi
   else
     echo "ERROR: GLM config not found at $GLM_CONFIG"
     exit 1
@@ -46,7 +54,7 @@ call_subagent() {
   local max_turns="${3:-4}"
   local timeout_sec=90
 
-  if [ "$LLM" = "glm" ]; then
+  if [ "$LLM" = "glm" ] || [ "$LLM" = "glm5" ]; then
     timeout "$timeout_sec" \
     env ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
         ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
@@ -117,10 +125,10 @@ build_actor_prompt() {
     [ -f "$AGENT_DIR/outbox.json" ] && cat "$AGENT_DIR/outbox.json" || echo "(none)"
     echo ""
     echo "### Recent events"
-    ([ -f "$AGENT_DIR/events.json" ] && [ -s "$AGENT_DIR/events.json" ] && cat "$AGENT_DIR/events.json") || echo "[]"
+    echo "${EVENTS_SNAPSHOT:-[]}"
     echo ""
     echo "### Chat"
-    ([ -f "$AGENT_DIR/chat.json" ] && [ -s "$AGENT_DIR/chat.json" ] && cat "$AGENT_DIR/chat.json") || echo "[]"
+    echo "${CHAT_SNAPSHOT:-[]}"
     echo ""
 
     echo "$TOOL_CATALOG"
@@ -138,6 +146,7 @@ build_actor_prompt() {
 
     echo "## Action"
     echo "Write your JavaScript action to: $AGENT_DIR/inbox.js"
+    echo "Save personal tools to: $AGENT_DIR/tools/<name>.js"
     echo "The result will be provided in the next prompt. Do NOT use Bash to check results."
     echo "If you have nothing to do, just respond with text (no Write)."
   } > "$file"
@@ -181,7 +190,7 @@ call_actor() {
       --yolo \
       --output-format stream-json \
       2>&1
-  elif [ "$LLM" = "glm" ]; then
+  elif [ "$LLM" = "glm" ] || [ "$LLM" = "glm5" ]; then
     timeout "$timeout_sec" \
     env ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic" \
         ANTHROPIC_AUTH_TOKEN="$GLM_TOKEN" \
@@ -196,6 +205,7 @@ call_actor() {
     timeout "$timeout_sec" \
     claude -p "$(cat "$prompt_file")" \
       --model "$CLAUDE_MODEL" \
+      ${EFFORT:+--effort "$EFFORT"} \
       --allowedTools "$ACTOR_TOOLS" \
       --dangerously-skip-permissions \
       --max-turns 4 \
@@ -287,7 +297,7 @@ start_bot() {
 }
 trap 'kill $BOT_PID 2>/dev/null' EXIT
 
-echo "=== Agent $AGENT_NAME starting (LLM: $LLM) ==="
+echo "=== Agent $AGENT_NAME starting (LLM: $LLM${EFFORT:+, effort: $EFFORT}) ==="
 echo "Agent dir: $AGENT_DIR"
 
 # Generate tool catalog once at startup
@@ -308,8 +318,15 @@ while true; do
   for action_num in $(seq 1 $MAX_ACTIONS); do
     echo "--- Action $action_num/$MAX_ACTIONS ---"
 
-    # Record outbox mtime before LLM call
+    # Record mtimes before LLM call
     OUTBOX_MTIME=$(stat -f %m "$AGENT_DIR/outbox.json" 2>/dev/null || echo "0")
+    LASTACTION_MTIME=$(stat -f %m "$AGENT_DIR/last-action.js" 2>/dev/null || echo "0")
+
+    # Snapshot chat/events then clear — avoids losing messages that arrive during LLM call
+    CHAT_SNAPSHOT=$(cat "$AGENT_DIR/chat.json" 2>/dev/null || echo "[]")
+    EVENTS_SNAPSHOT=$(cat "$AGENT_DIR/events.json" 2>/dev/null || echo "[]")
+    echo "[]" > "$AGENT_DIR/chat.json"
+    echo "[]" > "$AGENT_DIR/events.json"
 
     # Build fresh prompt with latest state
     ACTOR_PROMPT=$(build_actor_prompt)
@@ -317,8 +334,9 @@ while true; do
     # Call LLM — it thinks and writes inbox.js (or not)
     call_actor "$ACTOR_PROMPT" | parse_llm_output | tee -a "$AGENT_DIR/last-run.log"
 
-    # Did the LLM write inbox.js?
-    if [ ! -f "$AGENT_DIR/inbox.js" ]; then
+    # Did the LLM write inbox.js? (might already be consumed by bot during streaming)
+    LASTACTION_MTIME_AFTER=$(stat -f %m "$AGENT_DIR/last-action.js" 2>/dev/null || echo "0")
+    if [ ! -f "$AGENT_DIR/inbox.js" ] && [ "$LASTACTION_MTIME_AFTER" = "$LASTACTION_MTIME" ]; then
       echo "  [no action written — ending cycle]"
       break
     fi
@@ -344,10 +362,6 @@ else:
   echo "--- Memory update ---"
   MEMORY_PROMPT=$(build_memory_prompt)
   call_subagent "$MEMORY_PROMPT" "Write" 4
-
-  # Cleanup
-  echo "[]" > "$AGENT_DIR/chat.json"
-  echo "[]" > "$AGENT_DIR/events.json"
 
   echo "--- Cycle $loop done, sleeping ${PAUSE}s ---"
 

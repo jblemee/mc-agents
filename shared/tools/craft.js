@@ -59,8 +59,17 @@ module.exports = async function(bot, { item, count = 1 } = {}) {
     if (!table) return `Placed crafting table but could not find it`
   }
 
-  // Pathfind to the table before using it
-  await bot.pathfinder.goto(new GoalNear(table.position.x, table.position.y, table.position.z, 2)).catch(() => {})
+  // Pathfind close to the table before using it
+  try {
+    await bot.pathfinder.goto(new GoalNear(table.position.x, table.position.y, table.position.z, 1))
+  } catch (e) {
+    // Check if close enough anyway
+    const dist = bot.entity.position.distanceTo(table.position)
+    if (dist > 4) return `Cannot reach crafting table (${dist.toFixed(0)} blocks away)`
+  }
+
+  // Look at the table to ensure interaction works
+  await bot.lookAt(table.position.offset(0.5, 0.5, 0.5))
 
   recipes = bot.recipesFor(itemData.id, null, 1, table)
   if (!recipes.length) return `No recipe for ${item} (check materials — need crafting table nearby for 3x3 recipes)`

@@ -13,14 +13,17 @@ The bot has built-in reflexes — you do NOT need to write code for these:
 
 **Your job for survival**: Keep food and weapons in inventory so the reflexes work. If inventory has no food, the bot starves. If it has no weapon, it can't fight. **Acquiring food is your responsibility.**
 
-## Early-game priorities
+## Survival options
 
-If your inventory is mostly empty (just spawned or died):
-1. Break grass for wheat_seeds → `tools.find_seeds({})`
-2. Punch a tree for wood → `tools.mine({ block: 'oak_log', count: 3 })`
-3. Craft planks + sticks + wooden tools
-4. Check the base chest for food → `tools.chest_withdraw({ item: 'bread', count: 5 })`
-5. Then pursue your role
+You decide your own strategy. Some options (non-exhaustive):
+
+- **Food**: bread from wheat farming (renewable), meat from hostile mobs, food from chests. Bread runs out — plan ahead.
+- **Tools**: wood → stone → iron → diamond. Better tools = faster mining = faster progress.
+- **Shelter**: dig underground, build a house, or light an area with torches. Mobs spawn in the dark.
+- **Farming**: hoe + water + seeds = wheat field. Takes time to set up but gives unlimited food.
+- **Mining**: surface ores are easy but scarce. Underground has iron, coal, gold, diamond.
+- **Storage**: chests prevent inventory loss on death. Shared chests let teammates trade.
+- **Cooperation**: chat with other players to coordinate, share locations, divide work.
 
 ## How to act
 
@@ -55,14 +58,17 @@ Example chain for iron pickaxe:
 
 ## Reusable tools
 
-Every working script MUST become a tool. Never write the same code twice.
-
-### Using an existing tool
+### Using shared tools
 ```js
 return await tools.mine({ block: 'oak_log', count: 3 })
 ```
 
-### Creating a new tool
+### Creating personal tools
+
+When you write a multi-step script that works (3+ tool calls or custom logic), **save it as a personal tool** using the Write tool:
+
+**File**: `tools/tool_name.js` (relative to your agent directory)
+
 ```js
 // Short description of what the tool does
 module.exports = async function(bot, { param1, param2 }) {
@@ -71,6 +77,12 @@ module.exports = async function(bot, { param1, param2 }) {
   return 'result'
 }
 ```
+
+The bot hot-reloads tools — your new tool is available as `tools.tool_name()` immediately.
+
+**When to save**: After a multi-step script succeeds (e.g. "mine iron + smelt + craft armor"). Don't save one-liners like `tools.mine(...)`.
+
+**Example**: If your inbox.js does mine → smelt → collect → craft successfully, save it as `tools/make_iron_gear.js` so you never write that sequence again.
 
 ### Debug
 The last executed script is saved in `last-action.js`. You can re-read it to debug.
@@ -96,8 +108,11 @@ All agents work together to build and stock the base. Coordinate via chat.
 
 ## Chat
 
-Check chat.json in the prompt. Reply with `bot.chat('message')` in inbox.js.
-Use chat to **share status and discoveries**, not to ask for help or report problems.
+Check chat.json in the prompt. Messages prefixed with `[whisper]` are private whispers.
+- Public message: `bot.chat('message')`
+- Whisper reply: `bot.whisper('username', 'message')`
+
+If someone whispers you, **reply with whisper**, not public chat. Use public chat to **share status and discoveries** with everyone.
 
 ## Night survival rule
 
