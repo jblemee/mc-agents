@@ -2,47 +2,43 @@
 
 Autonomous AI agents that survive in Minecraft. Each agent is an LLM (Claude, Gemini...) that controls a Mineflayer bot via JavaScript code.
 
-## Architecture
+## Architecture: reflexes and strategy
+
+The architecture is inspired by human cognition. A human playing Minecraft doesn't think before eating or fleeing a creeper: these are automatic gestures, System 1 (Kahneman). The prefrontal cortex handles strategy: where to build, what to craft, how to coordinate.
+
+Our agents work the same way:
+
+- **Reflexes (bot.js)**: a persistent Node.js process handles survival without waiting for the LLM. It eats when hunger drops, fights or flees when a mob attacks, digs a shelter as a last resort. This is procedural memory: the body knows how without thinking about it.
+- **Strategy (LLM)**: the language model plans, crafts, mines, coordinates. It writes JS that calls shared tools (`tools.mine()`, `tools.craft()`, `tools.smelt()`). This is semantic memory: knowing the tool exists and what it does, without knowing the Mineflayer API details.
+- **Memory (MEMORY.md)**: each agent maintains a persistent memory file updated every cycle. This is episodic memory: remembering what happened and deciding what to do next.
+
+Separating what needs thought from what doesn't is what every living organism does. A lizard doesn't need a cortex to flee a predator. An LLM doesn't need 30 seconds of compute to eat bread.
 
 ```
-┌─────────────┐   writes inbox.js   ┌──────────────────┐
-│  LLM (cron)  │ ─────────────────► │ Mineflayer Bot    │
-│  Claude/etc  │ ◄───────────────── │ (Node.js)         │
-└──────┬───────┘   reads outbox.json └────────┬─────────┘
-       │                                      │
-       ▼                                      ▼
-   MEMORY.md                          Minecraft Server
-   skills/*.md
-   tools/*.js
+┌──────────────────┐  inbox.js   ┌──────────────────┐
+│    LLM (loop)    │ ──────────► │  Mineflayer Bot   │
+│ Claude/GLM/Gemini│ ◄────────── │   (Node.js)       │
+└──────┬───────────┘  outbox.json└──────┬────────────┘
+       │                                │ reflexes:
+       ▼                                │  auto-eat
+   MEMORY.md                            │  auto-fight/flee
+   shared/tools/*.js                    │  auto-shelter
+                                        ▼
+                                  Minecraft Server
 ```
 
-1. A **Mineflayer bot** stays connected to the Minecraft server (persistent Node.js process)
-2. A **loop script** relaunches an LLM at regular intervals
-3. The LLM reads its **skills** (how to use mineflayer), its **memory** (what it did before), its **state** (health, hunger, position) and its **available tools**
-4. It writes JS in `inbox.js`, the bot executes it, and the result arrives in `outbox.json`
-5. If the script worked, the agent saves it as a **reusable tool** in `tools/`
-6. Before finishing, the LLM updates its `MEMORY.md`
+## Shared tools
 
-## Reusable tools
+Reusable tool modules in `shared/tools/*.js`, loaded by bot.js at startup. Each tool exports `async function(bot, { params })` with a `.meta` property (name, description, params). The tool catalog is auto-generated and injected into the LLM prompt.
 
-Each agent builds its own **toolbox** of tested, reusable scripts:
-
-- When a script works, the agent saves it in `agents/<name>/tools/` as a JS module
-- Tools are **auto-loaded** at bot startup and **hot-reloaded** when a file changes
-- The agent can call its tools from `inbox.js`: `await tools.mine({ block: 'oak_log' })`
-- The `bot` is automatically injected as the first argument
-
-Tool format:
 ```js
-// Mine N blocks of a given type
-module.exports = async function(bot, { block, count }) {
-  const mcData = require('minecraft-data')(bot.version)
-  // ...
-  return 'result'
-}
+// In inbox.js, the LLM writes:
+await tools.mine({ block: 'stone', count: 11 })
+await tools.craft({ item: 'furnace', count: 1 })
+await tools.smelt({ item: 'raw_iron', count: 3 })
 ```
 
-The last executed script is kept in `last-action.js` for easier debugging.
+Personal tools can also live in `agents/<name>/tools/` and are hot-reloaded via `fs.watch`.
 
 ## Prerequisites
 
@@ -80,12 +76,15 @@ MC_VERSION=1.21.11       # Server version
 ```bash
 ./run-agent.sh bob              # default LLM (glm)
 ./run-agent.sh bob 0 glm        # GLM 4.7 via BigModel API
-./run-agent.sh bob 0 claude      # Claude via Anthropic API
-./run-agent.sh bob 0 gemini      # Gemini via Google CLI
-./run-agent.sh bob 10            # limit to 10 cycles
+./run-agent.sh bob 0 sonnet     # Claude Sonnet via Anthropic API
+./run-agent.sh bob 0 opus low   # Claude Opus with effort level
+./run-agent.sh bob 0 gemini     # Gemini via Google CLI
+./run-agent.sh bob 10           # limit to 10 cycles
 ```
 
-The bot connects to the server, and the LLM begins its cycles: observe → decide → act → save as tool → memorize.
+The 4th argument (optional) sets the Claude `--effort` level: `low`, `medium`, or `high`.
+
+The bot connects to the server, and the LLM begins its cycles: observe → decide → act → memorize.
 
 To run multiple agents in parallel (tmux recommended):
 ```bash
@@ -171,45 +170,40 @@ Launch:
 
 ## LLM backends
 
-The 3rd argument to `run-agent.sh` selects the LLM backend:
+| Backend | Command | Setup |
+|---------|---------|-------|
+| GLM-4.7 (default) | `glm` | `glm token set` |
+| GLM-5 | `glm5` | `glm token set` |
+| Claude Sonnet 4.6 | `sonnet` / `claude` | Anthropic API key |
+| Claude Opus 4.6 | `opus` | Anthropic API key |
+| Claude Haiku 4.5 | `haiku` | Anthropic API key |
+| Gemini | `gemini` | `GEMINI_API_KEY` in `.env` or Google auth |
 
-| Backend | CLI required | Setup |
-|---------|-------------|-------|
-| `glm` (default) | [GLM CLI](https://github.com/xqsit94/glm) | `glm token set` |
-| `claude` | [Claude Code](https://claude.com/claude-code) | Anthropic API key |
-| `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` in `.env` or Google auth |
-
-Each agent can use a different LLM — just pass a different 3rd argument.
+Each agent can use a different LLM. Sonnet offers the best cost/efficiency ratio. Opus is the most capable but 30x more expensive.
 
 ## Project structure
 
 ```
 mc-agents/
 ├── .env                    # Server config (MC_HOST, MC_PORT, MC_VERSION)
-├── .env.example
-├── bot.js                  # Persistent Mineflayer bot (loads tools/, auto watch)
-├── run-agent.sh            # LLM loop (injects available tools into the prompt)
-├── system-prompt.md        # Base prompt (shared by all agents)
-├── skills/                 # How to use mineflayer (markdown)
-│   ├── 01-basics.md
-│   ├── 02-movement.md
-│   ├── 03-mining.md
-│   ├── 04-crafting.md
-│   ├── 05-survival.md
-│   └── 06-chat.md
+├── bot.js                  # Persistent bot (reflexes, eval inbox.js, tools loader)
+├── run-agent.sh            # LLM loop (prompt assembly, API call, memory update)
+├── system-prompt.md        # Base prompt (shared rules for all agents)
+├── shared/
+│   ├── tools/*.js          # Shared tools (mine, craft, shelter, smelt, scan...)
+│   └── tool-catalog.js     # Auto-generates tool docs for the LLM prompt
 └── agents/
     └── bob/
-        ├── config.json     # username + microsoft (optional)
+        ├── config.json     # Username + microsoft auth (optional)
         ├── personality.md  # Agent personality
         ├── MEMORY.md       # Persistent memory between cycles
-        ├── tools/          # Reusable JS scripts (created by the agent)
-        │   ├── mine.js
-        │   ├── scan.js
-        │   └── ...
-        ├── inbox.js        # JS code sent to the bot (created by the LLM)
+        ├── tools/          # Personal tools (hot-reloaded)
+        ├── inbox.js        # JS code written by the LLM
         ├── last-action.js  # Last executed script (debug)
-        ├── outbox.json     # Execution result (created by the bot)
-        └── status.json     # Real-time state (created by the bot)
+        ├── outbox.json     # Execution result
+        ├── status.json     # Real-time state (HP, food, position)
+        ├── chat.json       # Chat messages (snapshotted each cycle)
+        └── events.json     # Events: damage, death... (snapshotted each cycle)
 ```
 
 ## Troubleshooting
